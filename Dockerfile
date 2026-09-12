@@ -1,18 +1,16 @@
-﻿FROM node:20-bullseye-slim
+﻿FROM node:20-alpine
 
-# Install FFmpeg and certificates for RTMP streaming
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+# Install FFmpeg and SSL certificates
+RUN apk add --no-cache ffmpeg ca-certificates
 
 WORKDIR /app
 
-# Copy server package and install dependencies
+# Copy package files and install dependencies
 COPY server/package*.json ./server/
 WORKDIR /app/server
-RUN npm install --production
+RUN npm install --omit=dev
 
-# Copy source code
+# Copy application files
 WORKDIR /app
 COPY client ./client
 COPY server ./server
