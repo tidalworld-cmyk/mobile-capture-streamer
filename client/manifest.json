@@ -1,0 +1,17 @@
+﻿{
+  "name": "Type-C Live Streamer",
+  "short_name": "LiveStreamer",
+  "description": "Stream USB-C Video Capture Card input to YouTube and RTMP",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0c10",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%23ef4444'/><polygon points='40,30 70,50 40,70' fill='%23ffffff'/></svg>",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}

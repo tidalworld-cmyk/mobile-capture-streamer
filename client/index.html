@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0d14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Type-C Live Streamer Studio</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Studio Header -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+      </div>
+      <span>LiveStream Studio</span>
+    </div>
+
+    <div class="header-status">
+      <div class="status-badge" id="statusBadge">
+        <span class="status-dot"></span>
+        <span id="statusText">STANDBY</span>
+      </div>
+
+      <div class="battery-chip" id="batteryChip" title="Device Battery & Power Status" style="display: none;">
+        <span id="batteryIcon">🔋</span>
+        <span id="batteryPercent">--%</span>
+      </div>
+
+      <button class="icon-btn" id="toggleLockCamBtn" title="Maintain Selected Camera (Lock Selection)">
+        <svg viewBox="0 0 24 24" id="lockIconSvg" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+      </button>
+
+      <button class="icon-btn" id="openInfoModalBtn" title="Mobile & LAN Connection Info">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+      </button>
+
+      <button class="icon-btn" id="fullscreenBtn" title="Toggle Fullscreen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Studio Main Screen -->
+  <main class="studio-main">
+    
+    <!-- Video Monitor Card -->
+    <section class="viewport-card">
+      <video id="videoPreview" autoplay playsinline muted></video>
+
+      <!-- Empty State / Permissions Placeholder -->
+      <div class="placeholder-view" id="placeholderView">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M23 7l-7 5 7 5V7z"></path>
+          <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+        </svg>
+        <h3>No Video Feed</h3>
+        <p>Connect your USB-C video capture card or enable your camera feed to preview.</p>
+        <button class="btn-primary" id="startPreviewBtn">Start Video Feed</button>
+      </div>
+
+      <!-- Top Overlay: Timer & Stats -->
+      <div class="viewport-overlay-top">
+        <div class="live-timer-chip" id="liveTimerChip" style="display: none;">
+          <span class="status-dot" style="background:#ef4444; width:6px; height:6px;"></span>
+          <span id="liveTimer">00:00:00</span>
+        </div>
+
+        <div class="stream-stats-chip" id="streamStatsChip">
+          <div><span id="statsFps">0</span> FPS</div>
+          <div><span id="statsBitrate">0 kbps</span></div>
+        </div>
+      </div>
+
+      <!-- Bottom Overlay: VU Meter & Action shortcuts -->
+      <div class="viewport-overlay-bottom">
+        <div class="audio-meter-container" title="Audio Input Level">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+          <canvas id="audioMeterCanvas" width="120" height="10"></canvas>
+        </div>
+
+        <div class="viewport-actions">
+          <button class="overlay-btn" id="switchCameraBtn" title="Switch Camera / Capture Card">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          </button>
+          <button class="overlay-btn" id="mirrorBtn" title="Mirror / Flip Video">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"></path></svg>
+          </button>
+          <button class="overlay-btn" id="muteBtn" title="Mute Stream Audio">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Dynamic Camera Selection Bar with ON/OFF Badges -->
+    <div class="camera-dynamic-grid" id="cameraTabsGrid">
+      <!-- Generated dynamically with Camera 1, Camera 2, External / Other inputs with ON/OFF badges -->
+    </div>
+
+    <!-- Bottom Studio Dock -->
+    <nav class="control-dock">
+      <div class="dock-left">
+        <button class="dock-action-btn" id="openDeviceModalBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"></path><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+          <span>Capture</span>
+        </button>
+      </div>
+
+      <!-- Center Big Broadcast Action -->
+      <button class="broadcast-btn" id="broadcastBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8" fill="currentColor"></polygon></svg>
+        <span id="broadcastBtnText">GO LIVE</span>
+      </button>
+
+      <div class="dock-right">
+        <button class="dock-action-btn" id="openStreamModalBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          <span>RTMP</span>
+        </button>
+      </div>
+    </nav>
+  </main>
+
+  <!-- MODAL: Capture Device Settings -->
+  <div class="modal-overlay" id="deviceModal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"></path><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+          Capture Card & Audio
+        </h2>
+        <button class="icon-btn close-modal-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Video Input (Type-C Capture Card)</label>
+          <select id="videoDeviceSelect" class="form-control"></select>
+          <span class="hint">Plug in your USB-C video capture card (HDMI to USB-C / Cam Link / UVC dongle).</span>
+        </div>
+
+        <div class="form-group">
+          <label>Audio Input (HDMI In or Mic)</label>
+          <select id="audioDeviceSelect" class="form-control"></select>
+          <span class="hint">Select the capture card audio endpoint to capture game/camera HDMI audio.</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="form-group">
+            <label>Resolution</label>
+            <select id="resolutionSelect" class="form-control">
+              <option value="1080p">1080p (1920x1080)</option>
+              <option value="720p">720p (1280x720)</option>
+              <option value="480p">480p (854x480)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Frame Rate</label>
+            <select id="fpsSelect" class="form-control">
+              <option value="30">30 FPS</option>
+              <option value="60">60 FPS</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="switch-group">
+          <div class="switch-label">
+            <span>🔒 Maintain & Lock Camera Selection</span>
+            <span>Always restore and lock onto this camera selection</span>
+          </div>
+          <input type="checkbox" id="maintainCameraLock" class="toggle-checkbox" checked>
+        </div>
+
+        <div class="switch-group">
+          <div class="switch-label">
+            <span>⚡ Non-Standard / Safe Capture Mode</span>
+            <span>Relaxes resolution/fps constraints for non-standard USB-C capture cards</span>
+          </div>
+          <input type="checkbox" id="compatModeToggle" class="toggle-checkbox">
+        </div>
+
+        <!-- Hardware Diagnostics & Detection Section -->
+        <div style="border-top: 1px solid var(--border-color); padding-top: 14px; display: flex; flex-direction: column; gap: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 0.85rem; font-weight: 700; color: #38bdf8;">🔧 Device Diagnostics & USB Scan</span>
+            <button class="copy-btn" id="refreshDevicesBtn" type="button">🔄 Refresh List</button>
+          </div>
+
+          <div style="display: flex; gap: 8px;">
+            <button class="btn-secondary" id="scanWebUsbBtn" type="button" style="flex: 1; font-size: 0.8rem; padding: 8px 12px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+              <span>🔌 Scan USB-C Hardware</span>
+            </button>
+          </div>
+
+          <div id="rawDevicesBox" style="background: #0b1019; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; font-family: monospace; font-size: 0.75rem; max-height: 120px; overflow-y: auto; color: #94a3b8;">
+            Scanning cameras...
+          </div>
+
+          <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 10px; font-size: 0.75rem; color: #fbbf24; line-height: 1.4;">
+            <b>Capture card not showing?</b><br>
+            • <b>Enable OTG</b>: Open Phone Settings &gt; search <b>"OTG"</b> &gt; Turn ON <b>OTG Connection</b>.<br>
+            • <b>HDMI Signal</b>: Ensure your camera/source is powered ON and sending video into the capture card.<br>
+            • Tap <b>"Scan USB-C Hardware"</b> above to grant Chrome direct access to the USB device.
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary close-modal-btn">Cancel</button>
+        <button class="btn-primary" id="applyDeviceSettingsBtn">Apply Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: RTMP & YouTube Stream Settings -->
+  <div class="modal-overlay" id="streamModal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a9 9 0 0 1 9 9"></path><path d="M4 4a16 16 0 0 1 16 16"></path><circle cx="5" cy="19" r="1"></circle></svg>
+          Live Stream Destinations
+        </h2>
+        <button class="icon-btn close-modal-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Destination Preset</label>
+          <select id="streamPresetSelect" class="form-control">
+            <option value="youtube">YouTube Live</option>
+            <option value="twitch">Twitch</option>
+            <option value="facebook">Facebook Live</option>
+            <option value="custom">Custom RTMP Server</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Primary RTMP Server URL</label>
+          <input type="text" id="primaryRtmpUrl" class="form-control" value="rtmp://a.rtmp.youtube.com/live2" placeholder="rtmp://a.rtmp.youtube.com/live2">
+        </div>
+
+        <div class="form-group">
+          <label>Primary Stream Key</label>
+          <div class="input-with-action">
+            <input type="password" id="primaryStreamKey" class="form-control" placeholder="xxxx-xxxx-xxxx-xxxx-xxxx">
+            <button class="btn-secondary" id="toggleKeyVisibilityBtn" type="button" style="min-width: 60px;">Show</button>
+          </div>
+          <span class="hint">Find this in YouTube Studio &gt; Go Live &gt; Stream Settings &gt; Stream key.</span>
+        </div>
+
+        <!-- Multi-streaming -->
+        <div class="switch-group">
+          <div class="switch-label">
+            <span>Dual Multi-Stream</span>
+            <span>Broadcast simultaneously to a 2nd RTMP server</span>
+          </div>
+          <input type="checkbox" id="enableSecondaryStream" class="toggle-checkbox">
+        </div>
+
+        <div id="secondaryStreamSection" style="display: none; flex-direction: column; gap: 12px; padding: 12px; background: #0e1522; border-radius: 8px; border: 1px dashed var(--border-color);">
+          <div class="form-group">
+            <label>Secondary RTMP URL</label>
+            <input type="text" id="secondaryRtmpUrl" class="form-control" placeholder="rtmp://live.twitch.tv/app">
+          </div>
+          <div class="form-group">
+            <label>Secondary Stream Key</label>
+            <input type="password" id="secondaryStreamKey" class="form-control" placeholder="Secondary stream key">
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="form-group">
+            <label>Video Bitrate</label>
+            <select id="videoBitrateSelect" class="form-control">
+              <option value="1500k">1500 kbps (Economy)</option>
+              <option value="2500k">2500 kbps (720p Std)</option>
+              <option value="3500k" selected>3500 kbps (1080p Std)</option>
+              <option value="6000k">6000 kbps (1080p High)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Audio Bitrate</label>
+            <select id="audioBitrateSelect" class="form-control">
+              <option value="128k" selected>128 kbps (AAC)</option>
+              <option value="192k">192 kbps (High)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Custom Relay Address (Optional)</label>
+          <input type="text" id="customRelayWs" class="form-control" placeholder="ws://192.168.x.x:3000/live-stream">
+          <span class="hint">Leave empty when opening the web app directly from the server.</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary close-modal-btn">Cancel</button>
+        <button class="btn-primary" id="saveStreamSettingsBtn">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Mobile Connection & Help Info -->
+  <div class="modal-overlay" id="infoModal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
+          Mobile Setup & Connection Guide
+        </h2>
+        <button class="icon-btn close-modal-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div>
+          <h4 style="margin-bottom: 8px; font-size: 0.95rem;">📱 Open on Mobile Phone / Tablet</h4>
+          <p class="hint" style="margin-bottom: 12px;">Connect your mobile phone to the same Wi-Fi or phone hotspot, then open any of these addresses in Chrome or Safari:</p>
+          <div class="ip-list" id="ipListContainer">
+            <div class="hint">Loading available LAN addresses...</div>
+          </div>
+        </div>
+
+        <div style="padding-top: 12px; border-top: 1px solid var(--border-color);">
+          <h4 style="margin-bottom: 8px; font-size: 0.95rem;">🔌 USB-C Video Capture Card Setup</h4>
+          <ol class="hint" style="padding-left: 18px; display: flex; flex-direction: column; gap: 6px;">
+            <li>Plug your HDMI video source (camera, game console, laptop) into the capture card HDMI In.</li>
+            <li>Connect the Type-C side to your phone/PC (use an OTG adapter if needed on Android).</li>
+            <li>Tap <b>"Capture"</b> in the bottom dock and select your video capture card device.</li>
+            <li>Select the audio input corresponding to your capture card for HDMI audio.</li>
+            <li>Enter your YouTube Stream Key in <b>"RTMP"</b> and tap <b>"GO LIVE"</b>!</li>
+          </ol>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-primary close-modal-btn">Got It</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toastContainer"></div>
+
+  <!-- Scripts -->
+  <script src="js/audio-visualizer.js"></script>
+  <script src="js/capture.js"></script>
+  <script src="js/streamer.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
