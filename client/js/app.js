@@ -481,8 +481,21 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const res = await fetch('/api/info');
       const data = await res.json();
-      ipListContainer.innerHTML = '';
-      if (data.localIps && data.localIps.length > 0) {
+      const isPublicCloud = window.location.hostname.includes('onrender.com') || (!window.location.hostname.startsWith('192.168.') && !window.location.hostname.startsWith('10.') && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
+
+      if (isPublicCloud) {
+        const cloudUrl = window.location.origin;
+        ipListContainer.innerHTML = `
+          <div class="ip-badge" style="flex-direction: column; align-items: flex-start; gap: 8px; border-color: #10b981;">
+            <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+              <span style="font-weight:bold; color:#10b981;">🌐 Your Public Mobile Streamer URL</span>
+              <button class="copy-btn" data-url="${cloudUrl}">Copy</button>
+            </div>
+            <a href="${cloudUrl}" style="color:#38bdf8; font-size: 1rem; font-weight: bold; word-break:break-all; text-decoration:none;">${cloudUrl}</a>
+            <span style="font-size:0.75rem; color:#94a3b8;">✅ Trusted SSL is active! Open this link on your phone from anywhere using 4G/5G mobile data.</span>
+          </div>
+        `;
+      } else if (data.localIps && data.localIps.length > 0) {
         data.localIps.forEach(item => {
           const httpsPort = data.httpsPort || 3443;
           const badge = document.createElement('div');
@@ -500,18 +513,18 @@ document.addEventListener('DOMContentLoaded', () => {
           `;
           ipListContainer.appendChild(badge);
         });
-
-        ipListContainer.querySelectorAll('.copy-btn').forEach(btn => {
-          btn.addEventListener('click', () => {
-            navigator.clipboard.writeText(btn.dataset.url);
-            showToast('URL copied to clipboard!', 'success');
-          });
-        });
       } else {
         ipListContainer.innerHTML = '<div class="hint">No external LAN interfaces found.</div>';
       }
+
+      ipListContainer.querySelectorAll('.copy-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          navigator.clipboard.writeText(btn.dataset.url);
+          showToast('URL copied to clipboard!', 'success');
+        });
+      });
     } catch (e) {
-      ipListContainer.innerHTML = '<div class="hint">Could not fetch server LAN IP.</div>';
+      ipListContainer.innerHTML = `<div class="ip-badge" style="color:#38bdf8;">${window.location.origin}</div>`;
     }
   });
 
