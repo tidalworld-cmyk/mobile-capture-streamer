@@ -231,7 +231,8 @@
         <div class="form-group">
           <label>Destination Preset</label>
           <select id="streamPresetSelect" class="form-control">
-            <option value="youtube">YouTube Live</option>
+            <option value="youtube-rtmps" selected>YouTube Live (RTMPS Secure - Recommended)</option>
+            <option value="youtube">YouTube Live (Standard RTMP)</option>
             <option value="twitch">Twitch</option>
             <option value="facebook">Facebook Live</option>
             <option value="custom">Custom RTMP Server</option>
@@ -239,8 +240,8 @@
         </div>
 
         <div class="form-group">
-          <label>Primary RTMP Server URL</label>
-          <input type="text" id="primaryRtmpUrl" class="form-control" value="rtmp://a.rtmp.youtube.com/live2" placeholder="rtmp://a.rtmp.youtube.com/live2">
+          <label>Primary RTMP / RTMPS Server URL</label>
+          <input type="text" id="primaryRtmpUrl" class="form-control" value="rtmps://a.rtmp.youtube.com:443/live2" placeholder="rtmps://a.rtmp.youtube.com:443/live2">
         </div>
 
         <div class="form-group">

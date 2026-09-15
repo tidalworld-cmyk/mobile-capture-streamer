@@ -1,4 +1,4 @@
-﻿const http = require('http');
+const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
@@ -45,6 +45,7 @@ function setupWebSocketServer(wss) {
 
     let relay = null;
     let isStreaming = false;
+    const chunkQueue = [];
 
     ws.on('message', (message, isBinary) => {
       if (!isBinary) {
@@ -68,7 +69,7 @@ function setupWebSocketServer(wss) {
             relay = new FFmpegRelay({
               rtmpUrl,
               secondaryRtmpUrl,
-              videoBitrate: videoBitrate || '3000k',
+              videoBitrate: videoBitrate || '2500k',
               audioBitrate: audioBitrate || '128k',
               fps: fps || 30
             });
@@ -76,6 +77,15 @@ function setupWebSocketServer(wss) {
             relay.on('start', () => {
               isStreaming = true;
               activeRelays.set(ws, relay);
+              
+              // Flush any buffered chunks (especially the crucial EBML header)
+              if (chunkQueue.length > 0) {
+                console.log(`[WebSocket] FFmpeg ready. Flushing ${chunkQueue.length} buffered chunks into stdin.`);
+                while (chunkQueue.length > 0) {
+                  relay.write(chunkQueue.shift());
+                }
+              }
+
               ws.send(JSON.stringify({ type: 'status', state: 'live', message: 'FFmpeg relay started. Streaming to RTMP.' }));
             });
 
@@ -102,14 +112,16 @@ function setupWebSocketServer(wss) {
               console.log(`[Relay Close] Code ${code}, signal ${signal}`);
               isStreaming = false;
               activeRelays.delete(ws);
+              chunkQueue.length = 0;
               if (ws.readyState === ws.OPEN) {
-                ws.send(JSON.stringify({ type: 'status', state: 'stopped', message: 'Stream stopped.' }));
+                ws.send(JSON.stringify({ type: 'status', state: 'stopped', message: `Encoder process ended (code ${code}).` }));
               }
             });
 
             relay.start();
           } else if (payload.type === 'stop') {
             console.log('[WebSocket] Client requested stop stream');
+            chunkQueue.length = 0;
             if (relay) {
               relay.stop();
               relay = null;
@@ -122,8 +134,16 @@ function setupWebSocketServer(wss) {
           console.error('[WebSocket] JSON parse error:', e.message);
         }
       } else {
-        if (relay && isStreaming) {
+        // Binary chunk from MediaRecorder
+        if (relay && isStreaming && relay.isActive) {
+          while (chunkQueue.length > 0) {
+            relay.write(chunkQueue.shift());
+          }
           relay.write(message);
+        } else {
+          // Buffer the chunk so the initial WebM header is never lost
+          chunkQueue.push(message);
+          if (chunkQueue.length > 50) chunkQueue.shift();
         }
       }
     });

@@ -1,4 +1,4 @@
-﻿class LiveStreamer {
+class LiveStreamer {
   constructor() {
     this.ws = null;
     this.mediaRecorder = null;
@@ -73,7 +73,7 @@
         try {
           const mimeType = this.getBestMimeType();
           const recorderOptions = {
-            videoBitsPerSecond: parseInt(videoBitrate) * 1000 || 3000000,
+            videoBitsPerSecond: parseInt(videoBitrate) * 1000 || 2500000,
             audioBitsPerSecond: parseInt(audioBitrate) * 1000 || 128000
           };
           if (mimeType) {
@@ -91,6 +91,7 @@
           this.mediaRecorder.onerror = (e) => {
             console.error('[MediaRecorder error]:', e);
             if (this.onError) this.onError(e);
+            this.stopBroadcast();
           };
 
           this.mediaRecorder.start(this.timesliceMs);
@@ -114,11 +115,14 @@
             if (this.onStats) this.onStats(msg.data);
           } else if (msg.type === 'status') {
             if (msg.state === 'stopped') {
+              console.warn('[LiveStreamer] Server reported stream stopped:', msg.message);
+              if (this.onError) this.onError(msg.message || 'Stream stopped by server');
               this.stopBroadcast();
             }
           } else if (msg.type === 'error') {
             console.error('[LiveStreamer Server Error]:', msg.message);
             if (this.onError) this.onError(msg.message);
+            this.stopBroadcast();
           }
         } catch (e) {}
       };
@@ -130,6 +134,7 @@
         } else if (this.onError) {
           this.onError('Relay connection error');
         }
+        this.stopBroadcast();
       };
 
       this.ws.onclose = () => {

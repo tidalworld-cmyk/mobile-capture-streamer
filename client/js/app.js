@@ -565,7 +565,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   streamPresetSelect.addEventListener('change', () => {
     const val = streamPresetSelect.value;
-    if (val === 'youtube') {
+    if (val === 'youtube-rtmps') {
+      primaryRtmpUrlInput.value = 'rtmps://a.rtmp.youtube.com:443/live2';
+    } else if (val === 'youtube') {
       primaryRtmpUrlInput.value = 'rtmp://a.rtmp.youtube.com/live2';
     } else if (val === 'twitch') {
       primaryRtmpUrlInput.value = 'rtmp://live.twitch.tv/app';

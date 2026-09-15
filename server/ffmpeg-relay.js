@@ -55,7 +55,10 @@ class FFmpegRelay extends EventEmitter {
 
     const ffmpegArgs = [
       '-loglevel', 'info',
-      // Real-time pipe input
+      // Robust flags for live pipe stream
+      '-fflags', '+genpts+discardcorrupt',
+      '-err_detect', 'ignore_err',
+      '-use_wallclock_as_timestamps', '1',
       '-f', 'webm',
       '-i', 'pipe:0',
       // Video encoding for YouTube RTMP compatibility (ultrafast for low CPU usage)
