@@ -7,7 +7,7 @@ class LiveStreamer {
     this.onStatusChange = null;
     this.onStats = null;
     this.onError = null;
-    this.timesliceMs = 1000;
+    this.timesliceMs = 250;
   }
 
   getBestMimeType() {

@@ -55,27 +55,29 @@ class FFmpegRelay extends EventEmitter {
 
     const ffmpegArgs = [
       '-loglevel', 'info',
-      // Robust flags for live pipe stream
-      '-fflags', '+genpts+discardcorrupt',
+      // Real-time live pipe flags
+      '-fflags', '+genpts+discardcorrupt+nobuffer',
+      '-flags', 'low_delay',
       '-err_detect', 'ignore_err',
-      '-use_wallclock_as_timestamps', '1',
       '-f', 'webm',
       '-i', 'pipe:0',
-      // Video encoding for YouTube RTMP compatibility (ultrafast for low CPU usage)
+      // Video encoding for YouTube RTMP compatibility (ultrafast for smooth low CPU)
       '-c:v', 'libx264',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
       '-threads', '0',
       '-b:v', this.videoBitrate,
       '-maxrate', this.videoBitrate,
-      '-bufsize', `${parseInt(this.videoBitrate) * 2}k`,
+      '-bufsize', `${Math.round(parseInt(this.videoBitrate) * 1.2)}k`,
       '-pix_fmt', 'yuv420p',
       '-g', gopSize.toString(),
       '-r', this.fps.toString(),
-      // Audio encoding
+      '-fps_mode', 'cfr',
+      // Audio encoding with dynamic jitter compensation to prevent stutter
       '-c:a', 'aac',
       '-ar', '44100',
       '-b:a', this.audioBitrate,
+      '-af', 'aresample=async=1000:first_pts=0',
       ...outputArgs
     ];
 
