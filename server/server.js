@@ -170,7 +170,7 @@ function setupWebSocketServer(wss) {
 
 // 1. HTTP Server
 const httpServer = http.createServer(app);
-const httpWss = new WebSocketServer({ server: httpServer, path: '/live-stream' });
+const httpWss = new WebSocketServer({ server: httpServer });
 setupWebSocketServer(httpWss);
 
 httpServer.listen(HTTP_PORT, '0.0.0.0', () => {

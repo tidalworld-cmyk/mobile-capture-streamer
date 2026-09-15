@@ -43,7 +43,17 @@ class LiveStreamer {
 
     // Use current host if no custom relay URL specified
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const defaultWsUrl = `${wsProtocol}//${window.location.host}/live-stream`;
+    
+    // Automatically detect sub-path (e.g. if served under /streamer/, connect to /streamer/live-stream)
+    let basePath = window.location.pathname;
+    if (basePath.endsWith('/index.html')) {
+      basePath = basePath.slice(0, -'/index.html'.length);
+    }
+    if (basePath.endsWith('/')) {
+      basePath = basePath.slice(0, -1);
+    }
+    
+    const defaultWsUrl = `${wsProtocol}//${window.location.host}${basePath}/live-stream`;
     this.serverUrl = relayWsUrl || defaultWsUrl;
 
     console.log(`[LiveStreamer] Connecting to streaming relay at ${this.serverUrl}`);
