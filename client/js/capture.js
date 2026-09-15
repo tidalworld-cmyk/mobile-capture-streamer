@@ -243,6 +243,24 @@ class MediaCaptureManager {
     }) || null;
   }
 
+  async startScreenCapture() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      throw new Error('Screen / App capture is not supported in this browser.');
+    }
+    const screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: { ideal: this.fps, max: this.fps } },
+      audio: true
+    });
+    if (this.currentStream) {
+      this.currentStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+    }
+    this.currentStream = screenStream;
+    this.selectedVideoDeviceId = 'screen';
+    this._connectAudioToMixer();
+    if (this.onStreamChanged) this.onStreamChanged(this.currentStream);
+    return this.currentStream;
+  }
+
   async startStream(videoDeviceId = null, audioDeviceId = null) {
     if (videoDeviceId) this.selectedVideoDeviceId = videoDeviceId;
     if (audioDeviceId) this.selectedAudioDeviceId = audioDeviceId;

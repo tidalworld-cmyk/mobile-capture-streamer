@@ -270,6 +270,9 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
+    // Always provide OTG App Screen tile (allows streaming CameraFi or USB Camera app directly)
+    allCams.push({ device: { deviceId: 'screen' }, type: 'screen', icon: '📱', title: 'OTG App Screen', sub: 'CameraFi / Screen In' });
+
     allCams.forEach(item => {
       const tile = document.createElement('div');
       tile.className = 'cam-tile';
@@ -351,6 +354,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         tile.addEventListener('click', async () => {
+          if (item.type === 'screen') {
+            try {
+              showToast('📱 Select CameraFi or USB Camera app to stream...', 'info');
+              const stream = await captureManager.startScreenCapture();
+              onStreamUpdated(stream);
+              showToast('🔴 Cut to: OTG App Screen!', 'success');
+            } catch (err) {
+              if (err.name !== 'NotAllowedError') {
+                showToast(`Screen capture: ${err.message}`, 'error');
+              }
+            }
+            return;
+          }
+
           if (item.device.deviceId === captureManager.selectedVideoDeviceId) {
             showToast(`${item.title} is already active on Program!`, 'info');
             return;
