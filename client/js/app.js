@@ -98,11 +98,19 @@ document.addEventListener('DOMContentLoaded', () => {
       if (saved.enableSecondary) enableSecondaryStreamCheckbox.checked = saved.enableSecondary;
       if (saved.secondaryRtmpUrl) secondaryRtmpUrlInput.value = saved.secondaryRtmpUrl;
       if (saved.secondaryStreamKey) secondaryStreamKeyInput.value = saved.secondaryStreamKey;
-      if (saved.videoBitrate) videoBitrateSelect.value = saved.videoBitrate;
+      if (saved.videoBitrate) {
+        videoBitrateSelect.value = saved.videoBitrate;
+      } else {
+        videoBitrateSelect.value = '1000k';
+      }
       if (saved.audioBitrate) audioBitrateSelect.value = saved.audioBitrate;
       if (saved.customRelayWs) customRelayWsInput.value = saved.customRelayWs;
       if (saved.resolution) resolutionSelect.value = saved.resolution;
-      if (saved.fps) fpsSelect.value = saved.fps;
+      if (saved.fps) {
+        fpsSelect.value = saved.fps;
+      } else {
+        fpsSelect.value = '30';
+      }
       if (saved.aspectRatio) {
         currentAspectRatio = saved.aspectRatio;
         captureManager.aspectRatio = currentAspectRatio;
@@ -263,47 +271,108 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     allCams.forEach(item => {
-      const btn = document.createElement('button');
-      btn.className = 'cam-tab-btn';
+      const tile = document.createElement('div');
+      tile.className = 'cam-tile';
       
       const isCurrentActive = item.device && (item.device.deviceId === activeDeviceId);
       if (isCurrentActive) {
-        btn.classList.add('active');
+        tile.classList.add('active-pgm');
       }
 
-      btn.innerHTML = `
-        <span class="cam-tab-icon">${item.icon}</span>
-        <div class="cam-tab-info">
-          <span class="cam-tab-title">${item.title}</span>
-          <span class="cam-tab-sub">${item.sub}</span>
-        </div>
-        <span class="cam-switch-badge ${isCurrentActive ? 'on' : 'off'}">
-          <span class="badge-dot"></span>${isCurrentActive ? 'ON' : 'OFF'}
-        </span>
-      `;
+      if (!item.device) {
+        // Disconnected external card tile
+        tile.innerHTML = `
+          <div class="cam-tile-placeholder">
+            <span style="font-size: 1.2rem;">🔌</span>
+            <span style="font-size: 0.65rem; color: #64748b;">Not Connected</span>
+          </div>
+          <div class="cam-tile-overlay-top">
+            <span class="cam-badge-tag disconnected">OFF</span>
+          </div>
+          <div class="cam-tile-label-bar">
+            <span class="cam-tile-title">${item.title}</span>
+            <span class="cam-tile-sub">Type-C Capture</span>
+          </div>
+        `;
+        tile.addEventListener('click', () => {
+          showToast('⚠️ Type-C capture card not detected! Connect USB-C and enable OTG in Phone Settings.', 'error');
+        });
+      } else {
+        // Available camera tile with live thumbnail preview
+        const videoEl = document.createElement('video');
+        videoEl.className = 'cam-tile-video';
+        videoEl.autoplay = true;
+        videoEl.playsInline = true;
+        videoEl.muted = true;
+        videoEl.setAttribute('playsinline', '');
+        videoEl.setAttribute('webkit-playsinline', '');
+        videoEl.setAttribute('muted', '');
 
-      btn.addEventListener('click', async () => {
-        if (!item.device) {
-          showToast('⚠️ Type-C capture card not detected! Check USB-C connection and enable OTG in Phone Settings.', 'error');
-          return;
+        tile.appendChild(videoEl);
+
+        const overlayTop = document.createElement('div');
+        overlayTop.className = 'cam-tile-overlay-top';
+        overlayTop.innerHTML = isCurrentActive
+          ? `<span class="cam-badge-tag live">🔴 LIVE</span>`
+          : `<span class="cam-badge-tag ready">READY</span>`;
+        tile.appendChild(overlayTop);
+
+        const labelBar = document.createElement('div');
+        labelBar.className = 'cam-tile-label-bar';
+        labelBar.innerHTML = `
+          <span class="cam-tile-title">${item.title}</span>
+          <span class="cam-tile-sub">${item.sub}</span>
+        `;
+        tile.appendChild(labelBar);
+
+        if (isCurrentActive) {
+          // If active camera, display the current live feed directly
+          videoEl.srcObject = captureManager.currentStream;
+          videoEl.play().catch(() => {});
+        } else {
+          // Attempt background thumbnail preview
+          navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: item.device.deviceId }, width: 320, height: 180 },
+            audio: false
+          }).then(previewStream => {
+            videoEl.srcObject = previewStream;
+            videoEl.play().catch(() => {});
+          }).catch(() => {
+            // Standby card for phones with single-camera hardware constraint
+            videoEl.style.display = 'none';
+            const standbyBox = document.createElement('div');
+            standbyBox.className = 'cam-tile-placeholder';
+            standbyBox.innerHTML = `
+              <span style="font-size: 1.3rem;">${item.icon}</span>
+              <span style="font-size: 0.65rem; color: #38bdf8; font-weight: 700;">READY TO PLAY</span>
+            `;
+            tile.insertBefore(standbyBox, overlayTop);
+          });
         }
 
-        try {
-          showToast(`Switching ON: ${item.title}...`, 'info');
-          const stream = await captureManager.startStream(item.device.deviceId);
-          onStreamUpdated(stream);
-
-          if (isCameraLocked) {
-            localStorage.setItem(LOCKED_CAM_KEY, item.device.deviceId);
+        tile.addEventListener('click', async () => {
+          if (item.device.deviceId === captureManager.selectedVideoDeviceId) {
+            showToast(`${item.title} is already active on Program!`, 'info');
+            return;
           }
 
-          showToast(`✅ ${item.title} is now ON & Maintained!`, 'success');
-        } catch (err) {
-          showToast(`Failed to switch to ${item.title}: ${err.message}`, 'error');
-        }
-      });
+          try {
+            showToast(`Switching to: ${item.title}...`, 'info');
+            const stream = await captureManager.startStream(item.device.deviceId);
+            onStreamUpdated(stream);
 
-      cameraTabsGrid.appendChild(btn);
+            if (isCameraLocked) {
+              localStorage.setItem(LOCKED_CAM_KEY, item.device.deviceId);
+            }
+
+            showToast(`🔴 Cut to: ${item.title}!`, 'success');
+          } catch (err) {
+            showToast(`Failed to switch to ${item.title}: ${err.message}`, 'error');
+          }
+        });
+      }
+
+      cameraTabsGrid.appendChild(tile);
     });
   };
 

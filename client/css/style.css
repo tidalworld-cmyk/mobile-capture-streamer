@@ -878,3 +878,149 @@ body {
   color: #f87171;
   animation: pulse-dot 1s infinite;
 }
+
+/* ==========================================================================
+   Multi-Camera Live Thumbnail Switcher Tiles (ATEM / Studio Video Switcher)
+   ========================================================================== */
+.camera-dynamic-grid {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 8px 4px 6px 4px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #334155 transparent;
+}
+
+.camera-dynamic-grid::-webkit-scrollbar {
+  height: 4px;
+}
+
+.camera-dynamic-grid::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+
+.cam-tile {
+  flex: 0 0 135px;
+  height: 86px;
+  position: relative;
+  background: #090d16;
+  border-radius: 8px;
+  border: 2px solid #334155;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.cam-tile:hover {
+  border-color: #38bdf8;
+  transform: translateY(-2px);
+}
+
+.cam-tile.active-pgm {
+  border-color: #ef4444;
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.6);
+}
+
+.cam-tile-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+  pointer-events: none;
+}
+
+.cam-tile-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #0b111d;
+  color: #64748b;
+  font-size: 0.75rem;
+  gap: 4px;
+}
+
+.cam-tile-overlay-top {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  right: 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  pointer-events: none;
+}
+
+.cam-badge-tag {
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cam-badge-tag.live {
+  background: #ef4444;
+  color: #fff;
+  animation: pulse-live 1.2s infinite;
+}
+
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.cam-badge-tag.ready {
+  background: rgba(16, 185, 129, 0.85);
+  color: #fff;
+}
+
+.cam-badge-tag.standby {
+  background: rgba(56, 189, 248, 0.85);
+  color: #fff;
+}
+
+.cam-badge-tag.disconnected {
+  background: rgba(100, 116, 139, 0.6);
+  color: #cbd5e1;
+}
+
+.cam-tile-label-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.92) 50%);
+  padding: 10px 6px 4px 6px;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+
+.cam-tile-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cam-tile-sub {
+  font-size: 0.6rem;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

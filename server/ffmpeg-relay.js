@@ -6,7 +6,7 @@ class FFmpegRelay extends EventEmitter {
     super();
     this.rtmpUrl = options.rtmpUrl;
     this.secondaryRtmpUrl = options.secondaryRtmpUrl || null;
-    this.videoBitrate = options.videoBitrate || '3000k';
+    this.videoBitrate = options.videoBitrate || '1000k';
     this.audioBitrate = options.audioBitrate || '128k';
     this.fps = options.fps || 30;
     this.aspectRatio = options.aspectRatio || '16:9';

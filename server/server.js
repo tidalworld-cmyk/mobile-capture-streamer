@@ -69,7 +69,7 @@ function setupWebSocketServer(wss) {
             relay = new FFmpegRelay({
               rtmpUrl,
               secondaryRtmpUrl,
-              videoBitrate: videoBitrate || '2500k',
+              videoBitrate: videoBitrate || '1000k',
               audioBitrate: audioBitrate || '128k',
               fps: fps || 30,
               aspectRatio: aspectRatio || '16:9'
