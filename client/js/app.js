@@ -850,12 +850,22 @@ document.addEventListener('DOMContentLoaded', () => {
     showToast(`Streaming error: ${err}`, 'error');
   };
 
-  captureManager.onDeviceDisconnected = (kind) => {
-    showToast(`⚠️ ${kind === 'video' ? 'Capture card' : 'Audio input'} was disconnected!`, 'error');
-    if (isLive) {
-      streamer.stopBroadcast();
+  captureManager.onDeviceDisconnected = async (kind) => {
+    showToast(`⚠️ ${kind === 'video' ? 'Capture card' : 'Audio input'} disconnected!`, 'error');
+    try {
+      const fallbackCam = captureManager.videoDevices.find(d => d.deviceId !== captureManager.selectedVideoDeviceId) || captureManager.videoDevices[0];
+      if (fallbackCam) {
+        showToast(`Switching to ${fallbackCam.label || 'phone camera'}...`, 'info');
+        const stream = await captureManager.startStream(fallbackCam.deviceId);
+        onStreamUpdated(stream);
+      } else if (isLive) {
+        streamer.stopBroadcast();
+        initCapture();
+      }
+    } catch (e) {
+      if (isLive) streamer.stopBroadcast();
+      initCapture();
     }
-    initCapture();
   };
 
   loadSavedSettings();

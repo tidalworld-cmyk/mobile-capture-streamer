@@ -1,19 +1,40 @@
 class MediaCaptureManager {
   constructor() {
-    this.currentStream = null;
+    this.rawStream = null;          // Physical hardware stream from camera/capture card
+    this.currentStream = null;      // Virtual mixed broadcast stream (Canvas + Web Audio)
     this.videoDevices = [];
     this.audioDevices = [];
     this.selectedVideoDeviceId = null;
     this.selectedAudioDeviceId = null;
-    this.currentCameraType = null; // 'front', 'back', 'external', or deviceId
+    this.currentCameraType = null;
     this.resolution = '1080p';
-    this.aspectRatio = '16:9'; // '16:9' or '9:16'
+    this.aspectRatio = '16:9';      // '16:9' or '9:16'
     this.fps = 30;
-    this.isCompatibilityMode = false; // Safe mode for non-standard USB capture cards
-    this.isLocked = true; // Maintain selected camera
+    this.isCompatibilityMode = false;
+    this.isLocked = true;
+    this.isSwitching = false;
     this.onDevicesChanged = null;
     this.onStreamChanged = null;
     this.onDeviceDisconnected = null;
+
+    // Virtual Video Canvas & Offscreen Video Player
+    this.virtualCanvas = document.createElement('canvas');
+    this.canvasCtx = this.virtualCanvas.getContext('2d', { alpha: false });
+    this.virtualVideo = document.createElement('video');
+    this.virtualVideo.muted = true;
+    this.virtualVideo.playsInline = true;
+    this.virtualVideo.autoplay = true;
+
+    this.virtualCanvasStream = null;
+    this.renderRafId = null;
+
+    // Virtual Web Audio Mixer
+    this.virtualAudioCtx = null;
+    this.virtualAudioDest = null;
+    this.virtualAudioSource = null;
+
+    this._setupCanvasDimensions();
+    this._startRenderLoop();
 
     if (navigator.mediaDevices && navigator.mediaDevices.ondevicechange !== undefined) {
       navigator.mediaDevices.ondevicechange = async () => {
@@ -22,6 +43,90 @@ class MediaCaptureManager {
         if (this.onDevicesChanged) this.onDevicesChanged();
       };
     }
+  }
+
+  _setupCanvasDimensions() {
+    const isPortrait = this.aspectRatio === '9:16';
+    let w = 1920;
+    let h = 1080;
+    if (this.resolution === '720p') {
+      w = 1280; h = 720;
+    } else if (this.resolution === '480p') {
+      w = 854; h = 480;
+    }
+
+    this.virtualCanvas.width = isPortrait ? h : w;
+    this.virtualCanvas.height = isPortrait ? w : h;
+  }
+
+  _startRenderLoop() {
+    const render = () => {
+      const cw = this.virtualCanvas.width;
+      const ch = this.virtualCanvas.height;
+      const ctx = this.canvasCtx;
+
+      if (this.virtualVideo && this.virtualVideo.readyState >= 2) {
+        const vw = this.virtualVideo.videoWidth;
+        const vh = this.virtualVideo.videoHeight;
+
+        if (vw > 0 && vh > 0) {
+          const scale = Math.min(cw / vw, ch / vh);
+          const dw = vw * scale;
+          const dh = vh * scale;
+          const dx = (cw - dw) / 2;
+          const dy = (ch - dh) / 2;
+
+          ctx.fillStyle = '#000000';
+          ctx.fillRect(0, 0, cw, ch);
+          ctx.drawImage(this.virtualVideo, dx, dy, dw, dh);
+        }
+      } else {
+        ctx.fillStyle = '#05070b';
+        ctx.fillRect(0, 0, cw, ch);
+      }
+
+      this.renderRafId = requestAnimationFrame(render);
+    };
+
+    if (!this.renderRafId) {
+      this.renderRafId = requestAnimationFrame(render);
+    }
+  }
+
+  _ensureBroadcastStream() {
+    if (!this.virtualCanvasStream) {
+      this.virtualCanvasStream = this.virtualCanvas.captureStream(this.fps || 30);
+    }
+
+    if (!this.virtualAudioCtx) {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (AudioContextClass) {
+        this.virtualAudioCtx = new AudioContextClass();
+        this.virtualAudioDest = this.virtualAudioCtx.createMediaStreamDestination();
+      }
+    }
+
+    if (this.virtualAudioCtx && this.virtualAudioCtx.state === 'suspended') {
+      this.virtualAudioCtx.resume().catch(() => {});
+    }
+
+    const videoTrack = this.virtualCanvasStream ? this.virtualCanvasStream.getVideoTracks()[0] : null;
+    const audioTrack = this.virtualAudioDest ? this.virtualAudioDest.stream.getAudioTracks()[0] : null;
+
+    const tracks = [];
+    if (videoTrack) tracks.push(videoTrack);
+    if (audioTrack) tracks.push(audioTrack);
+
+    if (!this.currentStream) {
+      this.currentStream = new MediaStream(tracks);
+    } else {
+      const currentVideo = this.currentStream.getVideoTracks()[0];
+      if (!currentVideo && videoTrack) this.currentStream.addTrack(videoTrack);
+      const currentAudio = this.currentStream.getAudioTracks()[0];
+      if (!currentAudio && audioTrack) this.currentStream.addTrack(audioTrack);
+    }
+
+    return this.currentStream;
   }
 
   getResolutionConstraints() {
@@ -118,10 +223,13 @@ class MediaCaptureManager {
   }
 
   async startStream(videoDeviceId = null, audioDeviceId = null) {
-    this.stopStream();
-
     if (videoDeviceId) this.selectedVideoDeviceId = videoDeviceId;
     if (audioDeviceId) this.selectedAudioDeviceId = audioDeviceId;
+
+    this._setupCanvasDimensions();
+    this._ensureBroadcastStream();
+
+    this.isSwitching = true;
 
     const res = this.getResolutionConstraints();
 
@@ -143,20 +251,13 @@ class MediaCaptureManager {
       }
     }
 
-    let audioConstraints = false;
+    let audioConstraints = {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false
+    };
     if (this.selectedAudioDeviceId) {
-      audioConstraints = {
-        deviceId: { exact: this.selectedAudioDeviceId },
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false
-      };
-    } else {
-      audioConstraints = {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false
-      };
+      audioConstraints.deviceId = { exact: this.selectedAudioDeviceId };
     }
 
     const constraints = {
@@ -164,21 +265,61 @@ class MediaCaptureManager {
       audio: audioConstraints
     };
 
-    console.log('[MediaCapture] Starting stream with constraints:', JSON.stringify(constraints));
+    console.log('[MediaCapture] Switching hardware input to:', this.selectedVideoDeviceId);
 
     try {
-      this.currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+      const newHardwareStream = await navigator.mediaDevices.getUserMedia(constraints);
 
-      this.currentStream.getVideoTracks().forEach(track => {
+      // Stop old hardware tracks only (NOT the broadcast currentStream!)
+      if (this.rawStream) {
+        this.rawStream.getTracks().forEach(track => {
+          try { track.stop(); } catch (e) {}
+        });
+      }
+      this.rawStream = newHardwareStream;
+
+      // Attach new video to offscreen player
+      this.virtualVideo.srcObject = this.rawStream;
+      try {
+        await this.virtualVideo.play();
+      } catch (e) {
+        console.warn('virtualVideo play warning:', e);
+      }
+
+      // Connect new audio track to AudioContext mixer
+      if (this.virtualAudioCtx && this.virtualAudioDest) {
+        if (this.virtualAudioSource) {
+          try { this.virtualAudioSource.disconnect(); } catch (e) {}
+          this.virtualAudioSource = null;
+        }
+
+        const audioTracks = this.rawStream.getAudioTracks();
+        if (audioTracks.length > 0) {
+          try {
+            const audioOnlyStream = new MediaStream([audioTracks[0]]);
+            this.virtualAudioSource = this.virtualAudioCtx.createMediaStreamSource(audioOnlyStream);
+            this.virtualAudioSource.connect(this.virtualAudioDest);
+          } catch (audioErr) {
+            console.warn('[MediaCapture] Virtual audio connect error:', audioErr);
+          }
+        }
+      }
+
+      // Listen for genuine hardware disconnection (e.g. cable unplugged)
+      this.rawStream.getVideoTracks().forEach(track => {
         track.onended = () => {
-          console.warn('[MediaCapture] Video track ended');
-          if (this.onDeviceDisconnected) this.onDeviceDisconnected('video');
+          if (!this.isSwitching) {
+            console.warn('[MediaCapture] Hardware camera disconnected');
+            if (this.onDeviceDisconnected) this.onDeviceDisconnected('video');
+          }
         };
       });
 
+      this.isSwitching = false;
+
       await this.enumerateDevices();
 
-      const activeVideoTrack = this.currentStream.getVideoTracks()[0];
+      const activeVideoTrack = this.rawStream.getVideoTracks()[0];
       if (activeVideoTrack) {
         const settings = activeVideoTrack.getSettings();
         if (settings.deviceId) {
@@ -192,19 +333,37 @@ class MediaCaptureManager {
 
       return this.currentStream;
     } catch (err) {
+      this.isSwitching = false;
       console.error('[MediaCapture] getUserMedia failed:', err);
+
       // Fallback 1: try without strict constraints
       console.warn('[MediaCapture] Fallback: Retrying with basic constraints...');
       try {
         const fallbackVideo = this.selectedVideoDeviceId ? { deviceId: { exact: this.selectedVideoDeviceId } } : true;
-        this.currentStream = await navigator.mediaDevices.getUserMedia({ video: fallbackVideo, audio: true });
+        const newHardwareStream = await navigator.mediaDevices.getUserMedia({ video: fallbackVideo, audio: true });
+        
+        if (this.rawStream) {
+          this.rawStream.getTracks().forEach(track => { try { track.stop(); } catch (e) {} });
+        }
+        this.rawStream = newHardwareStream;
+        this.virtualVideo.srcObject = this.rawStream;
+        await this.virtualVideo.play().catch(() => {});
+
         if (this.onStreamChanged) this.onStreamChanged(this.currentStream);
         return this.currentStream;
       } catch (err2) {
-        // Fallback 2: try video-only (non-standard capture cards without audio)
+        // Fallback 2: try video-only
         console.warn('[MediaCapture] Fallback 2: Retrying video only...');
         const fallbackVideo = this.selectedVideoDeviceId ? { deviceId: { exact: this.selectedVideoDeviceId } } : true;
-        this.currentStream = await navigator.mediaDevices.getUserMedia({ video: fallbackVideo, audio: false });
+        const newHardwareStream = await navigator.mediaDevices.getUserMedia({ video: fallbackVideo, audio: false });
+        
+        if (this.rawStream) {
+          this.rawStream.getTracks().forEach(track => { try { track.stop(); } catch (e) {} });
+        }
+        this.rawStream = newHardwareStream;
+        this.virtualVideo.srcObject = this.rawStream;
+        await this.virtualVideo.play().catch(() => {});
+
         if (this.onStreamChanged) this.onStreamChanged(this.currentStream);
         return this.currentStream;
       }
@@ -212,9 +371,18 @@ class MediaCaptureManager {
   }
 
   stopStream() {
-    if (this.currentStream) {
-      this.currentStream.getTracks().forEach(track => track.stop());
-      this.currentStream = null;
+    if (this.rawStream) {
+      this.rawStream.getTracks().forEach(track => {
+        try { track.stop(); } catch (e) {}
+      });
+      this.rawStream = null;
+    }
+    if (this.virtualVideo) {
+      this.virtualVideo.srcObject = null;
+    }
+    if (this.virtualAudioSource) {
+      try { this.virtualAudioSource.disconnect(); } catch (e) {}
+      this.virtualAudioSource = null;
     }
   }
 }
