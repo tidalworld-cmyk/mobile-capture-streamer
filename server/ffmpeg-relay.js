@@ -1,4 +1,4 @@
-﻿const { spawn } = require('child_process');
+const { spawn } = require('child_process');
 const EventEmitter = require('events');
 
 class FFmpegRelay extends EventEmitter {
@@ -58,10 +58,11 @@ class FFmpegRelay extends EventEmitter {
       // Real-time pipe input
       '-f', 'webm',
       '-i', 'pipe:0',
-      // Video encoding for YouTube RTMP compatibility
+      // Video encoding for YouTube RTMP compatibility (ultrafast for low CPU usage)
       '-c:v', 'libx264',
-      '-preset', 'veryfast',
+      '-preset', 'ultrafast',
       '-tune', 'zerolatency',
+      '-threads', '0',
       '-b:v', this.videoBitrate,
       '-maxrate', this.videoBitrate,
       '-bufsize', `${parseInt(this.videoBitrate) * 2}k`,
