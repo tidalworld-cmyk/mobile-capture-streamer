@@ -309,6 +309,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const onStreamUpdated = async (stream) => {
     videoPreview.srcObject = stream;
+    try { await videoPreview.play(); } catch (e) {}
     visualizer.attachStream(stream);
     await refreshDeviceSelectors();
   };
@@ -462,6 +463,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const stream = await captureManager.startStream(requestedVideoId, requestedAudioId);
       videoPreview.srcObject = stream;
+      try { await videoPreview.play(); } catch (e) {}
       placeholderView.style.display = 'none';
       videoPreview.style.display = 'block';
 
@@ -758,9 +760,11 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     try {
-      await streamer.startBroadcast(captureManager.currentStream, streamConfig);
+      const broadcastStream = captureManager.getBroadcastStream();
+      await streamer.startBroadcast(broadcastStream, streamConfig);
       saveSettings();
     } catch (err) {
+      captureManager.stopBroadcastStream();
       broadcastBtn.disabled = false;
       broadcastBtnText.textContent = 'GO LIVE';
       showToast(`Streaming failed: ${err.message}`, 'error');
@@ -779,6 +783,7 @@ document.addEventListener('DOMContentLoaded', () => {
       showToast('🔴 You are now streaming LIVE to RTMP / YouTube!', 'success');
     } else {
       isLive = false;
+      captureManager.stopBroadcastStream();
       broadcastBtn.classList.remove('is-live');
       broadcastBtnText.textContent = 'GO LIVE';
       updateStatusBadge('standby', 'READY');
