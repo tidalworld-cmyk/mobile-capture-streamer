@@ -85,6 +85,9 @@
         </div>
 
         <div class="viewport-actions">
+          <button class="overlay-btn" id="aspectRatioBtn" title="Toggle 16:9 Landscape / 9:16 Portrait">
+            <span id="aspectRatioLabel" style="font-size: 0.72rem; font-weight: 800; font-family: monospace; color: #fff;">16:9</span>
+          </button>
           <button class="overlay-btn" id="switchCameraBtn" title="Switch Camera / Capture Card">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
           </button>
@@ -150,13 +153,21 @@
           <span class="hint">Select the capture card audio endpoint to capture game/camera HDMI audio.</span>
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+          <div class="form-group">
+            <label>Screen Aspect</label>
+            <select id="aspectRatioSelect" class="form-control">
+              <option value="16:9" selected>16:9 (Landscape)</option>
+              <option value="9:16">9:16 (Shorts / Portrait)</option>
+            </select>
+          </div>
+
           <div class="form-group">
             <label>Resolution</label>
             <select id="resolutionSelect" class="form-control">
-              <option value="1080p">1080p (1920x1080)</option>
-              <option value="720p">720p (1280x720)</option>
-              <option value="480p">480p (854x480)</option>
+              <option value="1080p">1080p</option>
+              <option value="720p">720p</option>
+              <option value="480p">480p</option>
             </select>
           </div>
 

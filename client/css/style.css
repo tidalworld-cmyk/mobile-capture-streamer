@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg-main: #0a0d14;
   --bg-card: #121826;
   --bg-card-glass: rgba(18, 24, 38, 0.85);
@@ -186,10 +186,18 @@ body {
   height: 100%;
   object-fit: contain;
   background: #05070b;
+  transition: all 0.3s ease;
 }
 
 #videoPreview.mirrored {
   transform: scaleX(-1);
+}
+
+.viewport-card.portrait-mode #videoPreview {
+  max-width: 56.25vh; /* 9/16 vertical ratio guide */
+  box-shadow: 0 0 24px rgba(0, 0, 0, 0.9);
+  border-left: 1px dashed rgba(56, 189, 248, 0.4);
+  border-right: 1px dashed rgba(56, 189, 248, 0.4);
 }
 
 /* Overlay Elements */

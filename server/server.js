@@ -58,20 +58,21 @@ function setupWebSocketServer(wss) {
               return;
             }
 
-            const { rtmpUrl, secondaryRtmpUrl, videoBitrate, audioBitrate, fps } = payload;
+            const { rtmpUrl, secondaryRtmpUrl, videoBitrate, audioBitrate, fps, aspectRatio } = payload;
             
             if (!rtmpUrl) {
               ws.send(JSON.stringify({ type: 'error', message: 'RTMP URL / Stream Key is missing.' }));
               return;
             }
 
-            console.log('[WebSocket] Starting live stream session...');
+            console.log(`[WebSocket] Starting live stream session (Aspect: ${aspectRatio || '16:9'})...`);
             relay = new FFmpegRelay({
               rtmpUrl,
               secondaryRtmpUrl,
               videoBitrate: videoBitrate || '2500k',
               audioBitrate: audioBitrate || '128k',
-              fps: fps || 30
+              fps: fps || 30,
+              aspectRatio: aspectRatio || '16:9'
             });
 
             relay.on('start', () => {

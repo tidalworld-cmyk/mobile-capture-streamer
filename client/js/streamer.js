@@ -38,7 +38,8 @@ class LiveStreamer {
       secondaryRtmpUrl,
       videoBitrate,
       audioBitrate,
-      fps
+      fps,
+      aspectRatio
     } = config;
 
     // Use current host if no custom relay URL specified
@@ -76,7 +77,8 @@ class LiveStreamer {
           secondaryRtmpUrl,
           videoBitrate,
           audioBitrate,
-          fps
+          fps,
+          aspectRatio: aspectRatio || '16:9'
         }));
 
         // 2. Initialize MediaRecorder

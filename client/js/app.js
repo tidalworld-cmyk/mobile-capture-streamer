@@ -48,6 +48,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const audioDeviceSelect = document.getElementById('audioDeviceSelect');
   const resolutionSelect = document.getElementById('resolutionSelect');
   const fpsSelect = document.getElementById('fpsSelect');
+  const aspectRatioSelect = document.getElementById('aspectRatioSelect');
+  const aspectRatioBtn = document.getElementById('aspectRatioBtn');
+  const aspectRatioLabel = document.getElementById('aspectRatioLabel');
   const maintainCameraLockCheckbox = document.getElementById('maintainCameraLock');
   const compatModeToggleCheckbox = document.getElementById('compatModeToggle');
   const applyDeviceSettingsBtn = document.getElementById('applyDeviceSettingsBtn');
@@ -81,6 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let isMuted = false;
   let isMirrored = false;
   let isCameraLocked = true;
+  let currentAspectRatio = '16:9';
 
   // Local Storage Settings
   const STORAGE_KEY = 'typec_streamer_config';
@@ -99,6 +103,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (saved.customRelayWs) customRelayWsInput.value = saved.customRelayWs;
       if (saved.resolution) resolutionSelect.value = saved.resolution;
       if (saved.fps) fpsSelect.value = saved.fps;
+      if (saved.aspectRatio) {
+        currentAspectRatio = saved.aspectRatio;
+        captureManager.aspectRatio = currentAspectRatio;
+        if (aspectRatioSelect) aspectRatioSelect.value = currentAspectRatio;
+        if (aspectRatioLabel) aspectRatioLabel.textContent = currentAspectRatio;
+        updateViewportAspectRatioUI();
+      }
       if (saved.maintainCameraLock !== undefined) {
         isCameraLocked = saved.maintainCameraLock;
         if (maintainCameraLockCheckbox) maintainCameraLockCheckbox.checked = isCameraLocked;
@@ -128,6 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
       customRelayWs: customRelayWsInput.value.trim(),
       resolution: resolutionSelect.value,
       fps: fpsSelect.value,
+      aspectRatio: currentAspectRatio,
       maintainCameraLock: isCameraLocked,
       compatMode: captureManager.isCompatibilityMode
     };
@@ -160,6 +172,55 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.removeItem(LOCKED_CAM_KEY);
         showToast('🔓 Camera Unlocked: Auto-selection active.', 'info');
       }
+    });
+  }
+
+  // Aspect Ratio Controller (16:9 Landscape vs 9:16 YouTube Shorts Portrait)
+  const updateViewportAspectRatioUI = () => {
+    const viewportCard = document.querySelector('.viewport-card');
+    if (viewportCard) {
+      if (currentAspectRatio === '9:16') {
+        viewportCard.classList.add('portrait-mode');
+      } else {
+        viewportCard.classList.remove('portrait-mode');
+      }
+    }
+    if (aspectRatioLabel) {
+      aspectRatioLabel.textContent = currentAspectRatio;
+      aspectRatioLabel.style.color = currentAspectRatio === '9:16' ? '#38bdf8' : '#fff';
+    }
+    if (aspectRatioSelect) {
+      aspectRatioSelect.value = currentAspectRatio;
+    }
+  };
+
+  const setAspectRatio = async (ratio) => {
+    currentAspectRatio = ratio;
+    captureManager.aspectRatio = ratio;
+    updateViewportAspectRatioUI();
+    saveSettings();
+
+    if (captureManager.currentStream) {
+      try {
+        const stream = await captureManager.startStream(captureManager.selectedVideoDeviceId, captureManager.selectedAudioDeviceId);
+        onStreamUpdated(stream);
+      } catch (e) {
+        console.warn('Aspect ratio re-init error:', e);
+      }
+    }
+
+    showToast(
+      ratio === '9:16'
+        ? '📱 Switched to 9:16 Portrait (YouTube Shorts / Mobile Fullscreen)'
+        : '📺 Switched to 16:9 Landscape (Standard YouTube / TV)',
+      'info'
+    );
+  };
+
+  if (aspectRatioBtn) {
+    aspectRatioBtn.addEventListener('click', async () => {
+      const nextRatio = currentAspectRatio === '16:9' ? '9:16' : '16:9';
+      await setAspectRatio(nextRatio);
     });
   }
 
@@ -531,6 +592,11 @@ document.addEventListener('DOMContentLoaded', () => {
   applyDeviceSettingsBtn.addEventListener('click', async () => {
     const vId = videoDeviceSelect.value;
     const aId = audioDeviceSelect.value;
+    if (aspectRatioSelect) {
+      currentAspectRatio = aspectRatioSelect.value;
+      captureManager.aspectRatio = currentAspectRatio;
+      updateViewportAspectRatioUI();
+    }
     captureManager.resolution = resolutionSelect.value;
     captureManager.fps = parseInt(fpsSelect.value, 10);
     captureManager.isCompatibilityMode = compatModeToggleCheckbox ? compatModeToggleCheckbox.checked : false;
@@ -687,7 +753,8 @@ document.addEventListener('DOMContentLoaded', () => {
       secondaryRtmpUrl: fullSecondaryUrl,
       videoBitrate: videoBitrateSelect.value,
       audioBitrate: audioBitrateSelect.value,
-      fps: parseInt(fpsSelect.value, 10)
+      fps: parseInt(fpsSelect.value, 10),
+      aspectRatio: currentAspectRatio
     };
 
     try {

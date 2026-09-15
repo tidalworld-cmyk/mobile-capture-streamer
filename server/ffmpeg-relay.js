@@ -9,6 +9,7 @@ class FFmpegRelay extends EventEmitter {
     this.videoBitrate = options.videoBitrate || '3000k';
     this.audioBitrate = options.audioBitrate || '128k';
     this.fps = options.fps || 30;
+    this.aspectRatio = options.aspectRatio || '16:9';
     this.ffmpegProcess = null;
     this.isActive = false;
     this.stats = {
@@ -53,6 +54,21 @@ class FFmpegRelay extends EventEmitter {
       ];
     }
 
+    let filterArgs = [];
+    if (this.aspectRatio === '9:16') {
+      // 9:16 Vertical for YouTube Shorts / Mobile Fullscreen
+      filterArgs = [
+        '-vf',
+        'scale=w=1080:h=1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1'
+      ];
+    } else {
+      // 16:9 Horizontal for Standard YouTube Live
+      filterArgs = [
+        '-vf',
+        'scale=w=1920:h=1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1'
+      ];
+    }
+
     const ffmpegArgs = [
       '-loglevel', 'info',
       // Real-time live pipe flags
@@ -61,6 +77,7 @@ class FFmpegRelay extends EventEmitter {
       '-err_detect', 'ignore_err',
       '-f', 'webm',
       '-i', 'pipe:0',
+      ...filterArgs,
       // Video encoding for YouTube RTMP compatibility (ultrafast for smooth low CPU)
       '-c:v', 'libx264',
       '-preset', 'ultrafast',

@@ -1,4 +1,4 @@
-﻿class MediaCaptureManager {
+class MediaCaptureManager {
   constructor() {
     this.currentStream = null;
     this.videoDevices = [];
@@ -7,6 +7,7 @@
     this.selectedAudioDeviceId = null;
     this.currentCameraType = null; // 'front', 'back', 'external', or deviceId
     this.resolution = '1080p';
+    this.aspectRatio = '16:9'; // '16:9' or '9:16'
     this.fps = 30;
     this.isCompatibilityMode = false; // Safe mode for non-standard USB capture cards
     this.isLocked = true; // Maintain selected camera
@@ -28,15 +29,24 @@
       // Non-standard capture cards fail with ideal/exact resolutions
       return {};
     }
+    const isPortrait = this.aspectRatio === '9:16';
     switch (this.resolution) {
       case '1080p':
-        return { width: { ideal: 1920 }, height: { ideal: 1080 } };
+        return isPortrait
+          ? { width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9/16 } }
+          : { width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 16/9 } };
       case '720p':
-        return { width: { ideal: 1280 }, height: { ideal: 720 } };
+        return isPortrait
+          ? { width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 9/16 } }
+          : { width: { ideal: 1280 }, height: { ideal: 720 }, aspectRatio: { ideal: 16/9 } };
       case '480p':
-        return { width: { ideal: 854 }, height: { ideal: 480 } };
+        return isPortrait
+          ? { width: { ideal: 480 }, height: { ideal: 854 }, aspectRatio: { ideal: 9/16 } }
+          : { width: { ideal: 854 }, height: { ideal: 480 }, aspectRatio: { ideal: 16/9 } };
       default:
-        return { width: { ideal: 1280 }, height: { ideal: 720 } };
+        return isPortrait
+          ? { width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 9/16 } }
+          : { width: { ideal: 1280 }, height: { ideal: 720 }, aspectRatio: { ideal: 16/9 } };
     }
   }
 
