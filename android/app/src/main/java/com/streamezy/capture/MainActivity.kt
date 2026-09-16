@@ -426,28 +426,30 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 }
             }
 
-            // Always ensure video & audio encoders are prepared before starting stream
-            val videoPrepared = stream.prepareVideo(
-                streamConfig.videoWidth,
-                streamConfig.videoHeight,
-                StreamConfig.DEFAULT_BITRATE,
-                StreamConfig.DEFAULT_FPS,
-                2,
-                0
-            )
-            val audioPrepared = stream.prepareAudio(
-                StreamConfig.DEFAULT_SAMPLE_RATE,
-                false, // MONO channel
-                StreamConfig.DEFAULT_AUDIO_BITRATE
-            )
+            // Only prepare video & audio if preview was not active (RootEncoder requires preview stopped to prepare)
+            if (!stream.isOnPreview && !stream.isStreaming) {
+                val videoPrepared = stream.prepareVideo(
+                    streamConfig.videoWidth,
+                    streamConfig.videoHeight,
+                    StreamConfig.DEFAULT_BITRATE,
+                    StreamConfig.DEFAULT_FPS,
+                    2,
+                    0
+                )
+                val audioPrepared = stream.prepareAudio(
+                    StreamConfig.DEFAULT_SAMPLE_RATE,
+                    false, // MONO channel
+                    StreamConfig.DEFAULT_AUDIO_BITRATE
+                )
 
-            if (!videoPrepared || !audioPrepared) {
-                Log.w(TAG, "Encoder preparation returned false (v=$videoPrepared, a=$audioPrepared)")
-            }
+                if (!videoPrepared || !audioPrepared) {
+                    Log.w(TAG, "Encoder preparation returned false (v=$videoPrepared, a=$audioPrepared)")
+                }
 
-            if (!stream.isOnPreview && textureView.isAvailable) {
-                adjustAspectRatio(textureView.width, textureView.height)
-                stream.startPreview(textureView)
+                if (textureView.isAvailable) {
+                    adjustAspectRatio(textureView.width, textureView.height)
+                    stream.startPreview(textureView)
+                }
             }
 
             // Setup resilient retry
