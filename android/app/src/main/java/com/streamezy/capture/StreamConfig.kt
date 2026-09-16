@@ -10,10 +10,12 @@ class StreamConfig(context: Context) {
     companion object {
         const val DEFAULT_RTMP_URL = "rtmp://tn.streamezy.in/siva"
         const val YOUTUBE_RTMP_URL = "rtmp://a.rtmp.youtube.com/live2"
-        const val DEFAULT_BITRATE = 1000 * 1024 // 1000 kbps
+        const val BASE_WIDTH = 1280
+        const val BASE_HEIGHT = 720
+        const val DEFAULT_BITRATE = 1000 * 1000 // 1000 kbps (1 Mbps)
         const val DEFAULT_FPS = 30
         const val DEFAULT_SAMPLE_RATE = 44100
-        const val DEFAULT_AUDIO_BITRATE = 128 * 1024 // 128 kbps
+        const val DEFAULT_AUDIO_BITRATE = 128 * 1000 // 128 kbps
     }
 
     var rtmpUrl: String
@@ -27,12 +29,6 @@ class StreamConfig(context: Context) {
     var isPortraitShorts: Boolean
         get() = prefs.getBoolean("is_portrait_shorts", false)
         set(value) = prefs.edit().putBoolean("is_portrait_shorts", value).apply()
-
-    val width: Int
-        get() = if (isPortraitShorts) 720 else 1280
-
-    val height: Int
-        get() = if (isPortraitShorts) 1280 else 720
 
     val fullStreamEndpoint: String
         get() {

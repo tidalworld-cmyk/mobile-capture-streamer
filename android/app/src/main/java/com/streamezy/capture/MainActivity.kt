@@ -8,15 +8,15 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.LayoutInflater
+import android.view.SurfaceView
 import android.view.WindowManager
 import android.widget.Button
-import android.widget.Chronometer
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -33,11 +33,10 @@ import com.pedro.encoder.input.sources.video.Camera2Source
 import com.pedro.encoder.input.video.CameraHelper
 import com.pedro.extrasources.CameraUvcSource
 import com.pedro.library.generic.GenericStream
-import com.pedro.library.view.OpenGlView
 
 class MainActivity : AppCompatActivity(), ConnectChecker {
 
-    private lateinit var openGlView: OpenGlView
+    private lateinit var surfaceView: SurfaceView
     private lateinit var tvLiveBadge: TextView
     private lateinit var tvUptime: TextView
     private lateinit var tvStreamStats: TextView
@@ -81,7 +80,6 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                    val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     Toast.makeText(context, "USB Video Capture Card Connected!", Toast.LENGTH_SHORT).show()
                     updateOtgAvailability(true)
                 }
@@ -97,6 +95,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     companion object {
+        private const val TAG = "StreamEzy"
         private const val PERMISSIONS_REQUEST_CODE = 101
         private val REQUIRED_PERMISSIONS = arrayOf(
             Manifest.permission.CAMERA,
@@ -108,6 +107,16 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
+
+        // Prevent crashes from uncaught thread exceptions
+        val defaultUncaughtHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            Log.e(TAG, "Uncaught error in ${thread.name}: ${throwable.message}", throwable)
+            runOnUiThread {
+                Toast.makeText(applicationContext, "Stream error: ${throwable.localizedMessage}", Toast.LENGTH_LONG).show()
+            }
+            defaultUncaughtHandler?.uncaughtException(thread, throwable)
+        }
 
         streamConfig = StreamConfig(this)
 
@@ -123,7 +132,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     private fun initViews() {
-        openGlView = findViewById(R.id.openGlView)
+        surfaceView = findViewById(R.id.surfaceView)
         tvLiveBadge = findViewById(R.id.tvLiveBadge)
         tvUptime = findViewById(R.id.tvUptime)
         tvStreamStats = findViewById(R.id.tvStreamStats)
@@ -165,97 +174,139 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     private fun initStreamEngine() {
-        camera2Source = Camera2Source(this)
-        microphoneSource = MicrophoneSource()
-        genericStream = GenericStream(this, this, camera2Source, microphoneSource)
-
-        prepareAndStartPreview()
+        try {
+            camera2Source = Camera2Source(this)
+            microphoneSource = MicrophoneSource()
+            genericStream = GenericStream(this, this, camera2Source, microphoneSource)
+            prepareAndStartPreview()
+        } catch (e: Exception) {
+            Log.e(TAG, "Init stream engine failed", e)
+            Toast.makeText(this, "Camera init failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun prepareAndStartPreview() {
         val stream = genericStream ?: return
         try {
+            // Prepare hardware encoders only if not already active
+            if (!stream.isOnPreview && !stream.isStreaming) {
+                val rotation = if (streamConfig.isPortraitShorts) 90 else 0
+                val videoPrepared = stream.prepareVideo(
+                    StreamConfig.BASE_WIDTH,
+                    StreamConfig.BASE_HEIGHT,
+                    StreamConfig.DEFAULT_BITRATE,
+                    StreamConfig.DEFAULT_FPS,
+                    2,
+                    rotation
+                )
+                val audioPrepared = stream.prepareAudio(
+                    StreamConfig.DEFAULT_SAMPLE_RATE,
+                    true,
+                    StreamConfig.DEFAULT_AUDIO_BITRATE
+                )
+                if (!videoPrepared || !audioPrepared) {
+                    Log.w(TAG, "Hardware video ($videoPrepared) or audio ($audioPrepared) returned false")
+                }
+            }
+
+            // Start preview with autoHandle = true so it attaches when Surface is ready
             if (!stream.isOnPreview) {
-                stream.startPreview(openGlView)
+                stream.startPreview(surfaceView, true)
             }
             updateStatsDisplay()
         } catch (e: Exception) {
-            e.printStackTrace()
-            Toast.makeText(this, "Preview error: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "prepareAndStartPreview failed", e)
+            Toast.makeText(this, "Preview error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun startLiveStream() {
-        val stream = genericStream ?: return
+        val stream = genericStream ?: run {
+            Toast.makeText(this, "Stream engine not initialized", Toast.LENGTH_SHORT).show()
+            return
+        }
         val endpoint = streamConfig.fullStreamEndpoint
 
-        if (endpoint.isBlank() || endpoint == "rtmp://") {
-            Toast.makeText(this, "Please configure RTMP URL & Key in settings", Toast.LENGTH_LONG).show()
+        if (endpoint.isBlank() || endpoint == "rtmp://" || !endpoint.startsWith("rtmp")) {
+            Toast.makeText(this, "Please configure RTMP URL in settings", Toast.LENGTH_LONG).show()
             showSettingsDialog()
             return
         }
 
-        btnLive.isEnabled = false
-        btnLive.text = getString(R.string.connecting)
+        try {
+            btnLive.isEnabled = false
+            btnLive.text = getString(R.string.connecting)
 
-        // Lock to 1000 kbps, 30 fps, 2s keyframe
-        val videoPrepared = stream.prepareVideo(
-            streamConfig.width,
-            streamConfig.height,
-            StreamConfig.DEFAULT_FPS,
-            StreamConfig.DEFAULT_BITRATE,
-            2
-        )
+            // If preview was not active, prepare now
+            if (!stream.isOnPreview && !stream.isStreaming) {
+                val rotation = if (streamConfig.isPortraitShorts) 90 else 0
+                stream.prepareVideo(
+                    StreamConfig.BASE_WIDTH,
+                    StreamConfig.BASE_HEIGHT,
+                    StreamConfig.DEFAULT_BITRATE,
+                    StreamConfig.DEFAULT_FPS,
+                    2,
+                    rotation
+                )
+                stream.prepareAudio(
+                    StreamConfig.DEFAULT_SAMPLE_RATE,
+                    true,
+                    StreamConfig.DEFAULT_AUDIO_BITRATE
+                )
+                stream.startPreview(surfaceView, true)
+            }
 
-        val audioPrepared = stream.prepareAudio(
-            StreamConfig.DEFAULT_SAMPLE_RATE,
-            true,
-            StreamConfig.DEFAULT_AUDIO_BITRATE
-        )
-
-        if (videoPrepared && audioPrepared) {
             stream.startStream(endpoint)
-        } else {
+        } catch (e: Exception) {
+            Log.e(TAG, "startStream failed", e)
             btnLive.isEnabled = true
             btnLive.text = getString(R.string.go_live)
-            Toast.makeText(this, "Failed to prepare hardware encoders", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Start live failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
         }
     }
 
     private fun stopLiveStream() {
-        genericStream?.stopStream()
+        try {
+            genericStream?.stopStream()
+        } catch (e: Exception) {
+            Log.e(TAG, "stopStream error", e)
+        }
         onDisconnect()
     }
 
     private fun selectRearCamera() {
         try {
             if (currentSource == ActiveSource.OTG) {
+                if (camera2Source.getCameraFacing() != CameraHelper.Facing.BACK) {
+                    camera2Source.switchCamera()
+                }
                 genericStream?.changeVideoSource(camera2Source)
-            }
-            if (camera2Source.getCameraFacing() != CameraHelper.Facing.BACK) {
+            } else if (camera2Source.getCameraFacing() != CameraHelper.Facing.BACK) {
                 camera2Source.switchCamera()
             }
             currentSource = ActiveSource.REAR
             updateSwitcherUI()
         } catch (e: Exception) {
-            e.printStackTrace()
-            Toast.makeText(this, "Switch to Rear failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Switch to Rear failed", e)
+            Toast.makeText(this, "Switch to Rear failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun selectFrontCamera() {
         try {
             if (currentSource == ActiveSource.OTG) {
+                if (camera2Source.getCameraFacing() != CameraHelper.Facing.FRONT) {
+                    camera2Source.switchCamera()
+                }
                 genericStream?.changeVideoSource(camera2Source)
-            }
-            if (camera2Source.getCameraFacing() != CameraHelper.Facing.FRONT) {
+            } else if (camera2Source.getCameraFacing() != CameraHelper.Facing.FRONT) {
                 camera2Source.switchCamera()
             }
             currentSource = ActiveSource.FRONT
             updateSwitcherUI()
         } catch (e: Exception) {
-            e.printStackTrace()
-            Toast.makeText(this, "Switch to Front failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Switch to Front failed", e)
+            Toast.makeText(this, "Switch to Front failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -269,8 +320,8 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             updateSwitcherUI()
             Toast.makeText(this, "Switched to OTG Video Capture Card", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            e.printStackTrace()
-            Toast.makeText(this, "OTG Card error: ${e.message}. Ensure card is connected.", Toast.LENGTH_LONG).show()
+            Log.e(TAG, "OTG Camera switch failed", e)
+            Toast.makeText(this, "OTG Card error: ${e.localizedMessage}. Ensure OTG is turned on.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -290,15 +341,22 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             Toast.makeText(this, "Stop stream before changing aspect ratio", Toast.LENGTH_SHORT).show()
             return
         }
-        streamConfig.isPortraitShorts = !streamConfig.isPortraitShorts
-        genericStream?.stopPreview()
-        prepareAndStartPreview()
-        val mode = if (streamConfig.isPortraitShorts) "9:16 Shorts" else "16:9 Landscape"
-        Toast.makeText(this, "Switched to $mode", Toast.LENGTH_SHORT).show()
+        try {
+            streamConfig.isPortraitShorts = !streamConfig.isPortraitShorts
+            if (genericStream?.isOnPreview == true) {
+                genericStream?.stopPreview()
+            }
+            prepareAndStartPreview()
+            val mode = if (streamConfig.isPortraitShorts) "9:16 Shorts (Vertical)" else "16:9 Landscape"
+            Toast.makeText(this, "Switched to $mode", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Log.e(TAG, "Aspect ratio toggle failed", e)
+            Toast.makeText(this, "Aspect ratio error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun updateStatsDisplay() {
-        val aspect = if (streamConfig.isPortraitShorts) "9:16" else "16:9"
+        val aspect = if (streamConfig.isPortraitShorts) "9:16 Shorts" else "16:9"
         tvStreamStats.text = "1000 kbps | 30 fps ($aspect)"
     }
 
@@ -400,7 +458,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     override fun onNewBitrate(bitrate: Long) {
         runOnUiThread {
             val kbps = bitrate / 1000
-            val aspect = if (streamConfig.isPortraitShorts) "9:16" else "16:9"
+            val aspect = if (streamConfig.isPortraitShorts) "9:16 Shorts" else "16:9"
             tvStreamStats.text = "$kbps kbps | 30 fps ($aspect)"
         }
     }
@@ -444,11 +502,39 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (allPermissionsGranted() && genericStream != null && !genericStream!!.isOnPreview && !isStreaming) {
+            prepareAndStartPreview()
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (!isStreaming && genericStream?.isOnPreview == true) {
+            try {
+                genericStream?.stopPreview()
+            } catch (e: Exception) {
+                Log.e(TAG, "stopPreview onPause failed", e)
+            }
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
-        unregisterReceiver(usbReceiver)
+        try {
+            unregisterReceiver(usbReceiver)
+        } catch (e: Exception) {}
         uptimeHandler.removeCallbacks(uptimeRunnable)
-        genericStream?.stopStream()
-        genericStream?.stopPreview()
+        try {
+            if (genericStream?.isStreaming == true) {
+                genericStream?.stopStream()
+            }
+            if (genericStream?.isOnPreview == true) {
+                genericStream?.stopPreview()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "onDestroy stream cleanup failed", e)
+        }
     }
 }
