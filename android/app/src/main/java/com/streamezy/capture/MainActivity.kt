@@ -176,7 +176,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         val stream = genericStream ?: return
         try {
             if (!stream.isOnPreview) {
-                stream.startPreview(openGlView, streamConfig.width, streamConfig.height)
+                stream.startPreview(openGlView)
             }
             updateStatsDisplay()
         } catch (e: Exception) {
@@ -208,9 +208,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         )
 
         val audioPrepared = stream.prepareAudio(
-            StreamConfig.DEFAULT_AUDIO_BITRATE,
             StreamConfig.DEFAULT_SAMPLE_RATE,
-            true
+            true,
+            StreamConfig.DEFAULT_AUDIO_BITRATE
         )
 
         if (videoPrepared && audioPrepared) {
