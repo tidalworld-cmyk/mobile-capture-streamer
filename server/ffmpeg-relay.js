@@ -61,8 +61,14 @@ class FFmpegRelay extends EventEmitter {
         '-vf',
         'scale=w=1080:h=1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1'
       ];
+    } else if (this.aspectRatio === '4:3') {
+      // 4:3 Standard Aspect Ratio
+      filterArgs = [
+        '-vf',
+        'scale=w=1440:h=1080:force_original_aspect_ratio=decrease,pad=1440:1080:(ow-iw)/2:(oh-ih)/2,setsar=1'
+      ];
     } else {
-      // 16:9 Horizontal for Standard YouTube Live
+      // 16:9 Horizontal for Standard YouTube Live / Widescreen
       filterArgs = [
         '-vf',
         'scale=w=1920:h=1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1'

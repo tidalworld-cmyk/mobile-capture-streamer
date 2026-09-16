@@ -155,24 +155,29 @@ class MediaCaptureManager {
       // Non-standard capture cards fail with ideal/exact resolutions
       return {};
     }
-    const isPortrait = this.aspectRatio === '9:16';
-    switch (this.resolution) {
-      case '1080p':
-        return isPortrait
-          ? { width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9/16 } }
-          : { width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 16/9 } };
-      case '720p':
-        return isPortrait
-          ? { width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 9/16 } }
-          : { width: { ideal: 1280 }, height: { ideal: 720 }, aspectRatio: { ideal: 16/9 } };
-      case '480p':
-        return isPortrait
-          ? { width: { ideal: 480 }, height: { ideal: 854 }, aspectRatio: { ideal: 9/16 } }
-          : { width: { ideal: 854 }, height: { ideal: 480 }, aspectRatio: { ideal: 16/9 } };
-      default:
-        return isPortrait
-          ? { width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 9/16 } }
-          : { width: { ideal: 1280 }, height: { ideal: 720 }, aspectRatio: { ideal: 16/9 } };
+    const ratio = this.aspectRatio;
+    if (ratio === '9:16') {
+      switch (this.resolution) {
+        case '1080p': return { width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9/16 } };
+        case '720p': return { width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 9/16 } };
+        case '480p': return { width: { ideal: 480 }, height: { ideal: 854 }, aspectRatio: { ideal: 9/16 } };
+        default: return { width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 9/16 } };
+      }
+    } else if (ratio === '4:3') {
+      switch (this.resolution) {
+        case '1080p': return { width: { ideal: 1440 }, height: { ideal: 1080 }, aspectRatio: { ideal: 4/3 } };
+        case '720p': return { width: { ideal: 960 }, height: { ideal: 720 }, aspectRatio: { ideal: 4/3 } };
+        case '480p': return { width: { ideal: 640 }, height: { ideal: 480 }, aspectRatio: { ideal: 4/3 } };
+        default: return { width: { ideal: 960 }, height: { ideal: 720 }, aspectRatio: { ideal: 4/3 } };
+      }
+    } else {
+      // 16:9 default
+      switch (this.resolution) {
+        case '1080p': return { width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 16/9 } };
+        case '720p': return { width: { ideal: 1280 }, height: { ideal: 720 }, aspectRatio: { ideal: 16/9 } };
+        case '480p': return { width: { ideal: 854 }, height: { ideal: 480 }, aspectRatio: { ideal: 16/9 } };
+        default: return { width: { ideal: 1280 }, height: { ideal: 720 }, aspectRatio: { ideal: 16/9 } };
+      }
     }
   }
 

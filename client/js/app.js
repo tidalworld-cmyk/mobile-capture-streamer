@@ -183,19 +183,22 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Aspect Ratio Controller (16:9 Landscape vs 9:16 YouTube Shorts Portrait)
+  // Aspect Ratio Controller (16:9, 9:16, 4:3 - Fixed across mobile, tablet, and desktop)
   const updateViewportAspectRatioUI = () => {
     const viewportCard = document.querySelector('.viewport-card');
     if (viewportCard) {
+      viewportCard.classList.remove('aspect-16-9', 'aspect-9-16', 'aspect-4-3', 'portrait-mode');
       if (currentAspectRatio === '9:16') {
-        viewportCard.classList.add('portrait-mode');
+        viewportCard.classList.add('aspect-9-16', 'portrait-mode');
+      } else if (currentAspectRatio === '4:3') {
+        viewportCard.classList.add('aspect-4-3');
       } else {
-        viewportCard.classList.remove('portrait-mode');
+        viewportCard.classList.add('aspect-16-9');
       }
     }
     if (aspectRatioLabel) {
       aspectRatioLabel.textContent = currentAspectRatio;
-      aspectRatioLabel.style.color = currentAspectRatio === '9:16' ? '#38bdf8' : '#fff';
+      aspectRatioLabel.style.color = currentAspectRatio === '9:16' ? '#38bdf8' : (currentAspectRatio === '4:3' ? '#a78bfa' : '#fff');
     }
     if (aspectRatioSelect) {
       aspectRatioSelect.value = currentAspectRatio;
@@ -217,17 +220,22 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    showToast(
-      ratio === '9:16'
-        ? '📱 Switched to 9:16 Portrait (YouTube Shorts / Mobile Fullscreen)'
-        : '📺 Switched to 16:9 Landscape (Standard YouTube / TV)',
-      'info'
-    );
+    const toastMsg = ratio === '9:16'
+      ? '📱 Fixed 9:16 Vertical (Shorts / Portrait)'
+      : (ratio === '4:3' ? '📺 Fixed 4:3 Standard Ratio' : '🖥️ Fixed 16:9 Widescreen (Landscape)');
+    showToast(toastMsg, 'info');
   };
 
   if (aspectRatioBtn) {
     aspectRatioBtn.addEventListener('click', async () => {
-      const nextRatio = currentAspectRatio === '16:9' ? '9:16' : '16:9';
+      let nextRatio = '16:9';
+      if (currentAspectRatio === '16:9') {
+        nextRatio = '9:16';
+      } else if (currentAspectRatio === '9:16') {
+        nextRatio = '4:3';
+      } else {
+        nextRatio = '16:9';
+      }
       await setAspectRatio(nextRatio);
     });
   }

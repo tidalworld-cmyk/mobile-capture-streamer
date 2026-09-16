@@ -182,22 +182,47 @@ body {
 }
 
 #videoPreview {
-  width: 100%;
-  height: 100%;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
   object-fit: contain;
   background: #05070b;
-  transition: all 0.3s ease;
+  transition: max-width 0.25s ease, max-height 0.25s ease, border 0.25s ease;
 }
 
 #videoPreview.mirrored {
   transform: scaleX(-1);
 }
 
-.viewport-card.portrait-mode #videoPreview {
-  max-width: 56.25vh; /* 9/16 vertical ratio guide */
+/* Fixed 16:9 Aspect Ratio: Remains 16:9 across mobile, tablet, and desktop */
+.viewport-card.aspect-16-9 #videoPreview {
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+}
+
+/* Fixed 9:16 Aspect Ratio: Remains 9:16 across mobile, tablet, and desktop */
+.viewport-card.aspect-9-16 #videoPreview {
+  aspect-ratio: 9 / 16;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
   box-shadow: 0 0 24px rgba(0, 0, 0, 0.9);
   border-left: 1px dashed rgba(56, 189, 248, 0.4);
   border-right: 1px dashed rgba(56, 189, 248, 0.4);
+}
+
+/* Fixed 4:3 Aspect Ratio: Remains 4:3 across mobile, tablet, and desktop */
+.viewport-card.aspect-4-3 #videoPreview {
+  aspect-ratio: 4 / 3;
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+  box-shadow: 0 0 24px rgba(0, 0, 0, 0.9);
+  border-left: 1px dashed rgba(167, 139, 250, 0.4);
+  border-right: 1px dashed rgba(167, 139, 250, 0.4);
 }
 
 /* Overlay Elements */

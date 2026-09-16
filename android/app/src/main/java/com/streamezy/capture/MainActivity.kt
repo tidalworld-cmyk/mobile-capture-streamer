@@ -269,35 +269,31 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     /**
-     * Prevents camera preview from being stretched vertically or horizontally
-     * on tall (19.5:9, 20:9) or wide smartphone displays.
-     * External OTG capture cards are kept in clean 16:9 widescreen.
-     * Internal front/rear cameras respect user's 9:16 Shorts or 16:9 Landscape mode.
+     * The customer-selected aspect ratio remains fixed across mobile, tablet, and desktop,
+     * including when the phone is held vertically.
+     *
+     * 16:9 -> video remains 16:9 in portrait mobile (centered with letterbox black bars).
+     * 9:16 -> video remains 9:16 (centered with pillarbox on wide displays).
+     * 4:3  -> video remains 4:3 (centered with letterbox black bars).
+     * The mobile screen will not automatically force the video into 9:16.
+     * The video fits inside the fixed ratio without stretching or distortion.
      */
     private fun adjustAspectRatio(viewWidth: Int, viewHeight: Int) {
         if (viewWidth <= 0 || viewHeight <= 0) return
 
-        val targetRatio: Float = when (currentSource) {
-            ActiveSource.OTG -> 16f / 9f // External HDMI capture is always 16:9 widescreen
-            ActiveSource.FRONT, ActiveSource.REAR -> {
-                if (streamConfig.isPortraitShorts) {
-                    9f / 16f // 9:16 Vertical Shorts
-                } else {
-                    16f / 9f // 16:9 Standard Landscape
-                }
-            }
-        }
+        val targetRatio: Float = streamConfig.aspectRatioFloat
 
         val viewRatio = viewWidth.toFloat() / viewHeight.toFloat()
         val scaleX: Float
         val scaleY: Float
 
         if (viewRatio > targetRatio) {
-            // View is wider than target ratio
+            // View is wider than target aspect ratio -> fit height, pillarbox width
             scaleX = targetRatio / viewRatio
             scaleY = 1.0f
         } else {
-            // View is taller than target ratio (typical 20:9 Android phones)
+            // View is taller than target aspect ratio (e.g. phone held vertically)
+            // -> fit width, scale down height (letterbox with black bars top and bottom)
             scaleX = 1.0f
             scaleY = viewRatio / targetRatio
         }
@@ -470,7 +466,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             textureView.post {
                 adjustAspectRatio(textureView.width, textureView.height)
             }
-            val resLabel = if (streamConfig.isPortraitShorts) "720x1280 (9:16 Shorts)" else "1280x720 (16:9 HD)"
+            val resLabel = "${streamConfig.videoWidth}x${streamConfig.videoHeight} (${streamConfig.selectedAspectRatio})"
             Toast.makeText(this, "Rear Camera: $resLabel", Toast.LENGTH_SHORT).show()
             updateStatsDisplay()
         } catch (e: Exception) {
@@ -496,7 +492,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             textureView.post {
                 adjustAspectRatio(textureView.width, textureView.height)
             }
-            val resLabel = if (streamConfig.isPortraitShorts) "720x1280 (9:16 Shorts)" else "1280x720 (16:9 HD)"
+            val resLabel = "${streamConfig.videoWidth}x${streamConfig.videoHeight} (${streamConfig.selectedAspectRatio})"
             Toast.makeText(this, "Front Camera: $resLabel", Toast.LENGTH_SHORT).show()
             updateStatsDisplay()
         } catch (e: Exception) {
@@ -532,7 +528,8 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             textureView.post {
                 adjustAspectRatio(textureView.width, textureView.height)
             }
-            Toast.makeText(this, "OTG Active: 1280x720 (16:9 HD Widescreen)", Toast.LENGTH_SHORT).show()
+            val resLabel = "${streamConfig.videoWidth}x${streamConfig.videoHeight} (${streamConfig.selectedAspectRatio})"
+            Toast.makeText(this, "OTG Active: $resLabel", Toast.LENGTH_SHORT).show()
             updateStatsDisplay()
         } catch (e: Exception) {
             Log.e(TAG, "OTG Camera switch failed", e)
@@ -557,14 +554,23 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             return
         }
         try {
-            streamConfig.isPortraitShorts = !streamConfig.isPortraitShorts
+            val nextRatio = when (streamConfig.selectedAspectRatio) {
+                "16:9" -> "9:16"
+                "9:16" -> "4:3"
+                else -> "16:9"
+            }
+            streamConfig.selectedAspectRatio = nextRatio
             val stream = genericStream ?: return
             if (stream.isOnPreview) {
                 stream.stopPreview()
             }
             prepareAndStartPreview()
-            val mode = if (streamConfig.isPortraitShorts) "9:16 Shorts (Vertical)" else "16:9 Landscape"
-            Toast.makeText(this, "Switched to $mode", Toast.LENGTH_SHORT).show()
+            val mode = when (nextRatio) {
+                "9:16" -> "9:16 Shorts (Vertical)"
+                "4:3" -> "4:3 Standard"
+                else -> "16:9 Landscape"
+            }
+            Toast.makeText(this, "Aspect Ratio: $mode", Toast.LENGTH_SHORT).show()
             updateStatsDisplay()
         } catch (e: Exception) {
             Log.e(TAG, "Aspect ratio toggle failed", e)
@@ -573,12 +579,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     private fun updateStatsDisplay() {
-        val res = when (currentSource) {
-            ActiveSource.OTG -> "1280x720 (16:9 OTG)"
-            ActiveSource.REAR, ActiveSource.FRONT -> {
-                if (streamConfig.isPortraitShorts) "720x1280 (9:16 Shorts)" else "1280x720 (16:9)"
-            }
+        val aspect = streamConfig.selectedAspectRatio
+        val src = when (currentSource) {
+            ActiveSource.OTG -> "OTG"
+            ActiveSource.REAR -> "Rear"
+            ActiveSource.FRONT -> "Front"
         }
+        val res = "${streamConfig.videoWidth}x${streamConfig.videoHeight} ($aspect $src)"
         tvStreamStats.text = "1000 kbps | 30 fps | $res"
     }
 
@@ -629,10 +636,42 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             etStreamKey.requestFocus()
         }
 
+        val btnRatio16x9 = dialogView.findViewById<Button>(R.id.btnRatio16x9)
+        val btnRatio9x16 = dialogView.findViewById<Button>(R.id.btnRatio9x16)
+        val btnRatio4x3 = dialogView.findViewById<Button>(R.id.btnRatio4x3)
+        var tempRatio = streamConfig.selectedAspectRatio
+
+        fun updateRatioUI() {
+            val activeColor = ContextCompat.getColor(this, R.color.accent_blue)
+            val normalColor = ContextCompat.getColor(this, R.color.surface_card)
+            btnRatio16x9.setBackgroundColor(if (tempRatio == "16:9") activeColor else normalColor)
+            btnRatio9x16.setBackgroundColor(if (tempRatio == "9:16") activeColor else normalColor)
+            btnRatio4x3.setBackgroundColor(if (tempRatio == "4:3") activeColor else normalColor)
+        }
+        updateRatioUI()
+
+        btnRatio16x9.setOnClickListener { tempRatio = "16:9"; updateRatioUI() }
+        btnRatio9x16.setOnClickListener { tempRatio = "9:16"; updateRatioUI() }
+        btnRatio4x3.setOnClickListener { tempRatio = "4:3"; updateRatioUI() }
+
         btnSave.setOnClickListener {
             streamConfig.rtmpUrl = etRtmpUrl.text.toString().trim()
             streamConfig.streamKey = etStreamKey.text.toString().trim()
-            Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show()
+            val ratioChanged = streamConfig.selectedAspectRatio != tempRatio
+            streamConfig.selectedAspectRatio = tempRatio
+
+            if (ratioChanged && !isStreaming) {
+                try {
+                    genericStream?.let { s ->
+                        if (s.isOnPreview) s.stopPreview()
+                        prepareAndStartPreview()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Re-init on ratio change failed", e)
+                }
+            }
+            updateStatsDisplay()
+            Toast.makeText(this, "Settings saved (Aspect: $tempRatio)", Toast.LENGTH_SHORT).show()
             dialog.dismiss()
         }
 
@@ -748,12 +787,8 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     override fun onNewBitrate(bitrate: Long) {
         runOnUiThread {
             val kbps = bitrate / 1000
-            val res = when (currentSource) {
-                ActiveSource.OTG -> "1280x720 (16:9 OTG)"
-                ActiveSource.REAR, ActiveSource.FRONT -> {
-                    if (streamConfig.isPortraitShorts) "720x1280 (9:16 Shorts)" else "1280x720 (16:9)"
-                }
-            }
+            val aspect = streamConfig.selectedAspectRatio
+            val res = "${streamConfig.videoWidth}x${streamConfig.videoHeight} ($aspect)"
             tvStreamStats.text = "$kbps kbps | 30 fps | $res"
         }
     }
