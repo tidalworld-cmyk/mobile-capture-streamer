@@ -54,6 +54,14 @@ class StreamConfig(context: Context) {
             else -> 16f / 9f
         }
 
+    var rtmpUrl: String
+        get() = prefs.getString("rtmp_url", DEFAULT_RTMP_URL) ?: DEFAULT_RTMP_URL
+        set(value) = prefs.edit().putString("rtmp_url", value.trim()).apply()
+
+    var streamKey: String
+        get() = prefs.getString("stream_key", DEFAULT_STREAM_KEY) ?: DEFAULT_STREAM_KEY
+        set(value) = prefs.edit().putString("stream_key", value.trim()).apply()
+
     val fullStreamEndpoint: String
         get() {
             val base = rtmpUrl.removeSuffix("/")
