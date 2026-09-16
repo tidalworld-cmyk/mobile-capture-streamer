@@ -18,6 +18,8 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
     private var running = false
     private var surface: Surface? = null
     private var isCameraOpen = false
+    @Volatile
+    private var selectedDeviceName: String? = null
 
     companion object {
         private const val TAG = "OtgCameraSource"
@@ -54,7 +56,12 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
                 (0 until dev.interfaceCount).any { i -> dev.getInterface(i).interfaceClass == 14 }
             }
             if (uvcDevice != null) {
+                if (selectedDeviceName == uvcDevice.deviceName) {
+                    Log.d(TAG, "Device ${uvcDevice.deviceName} already selected, skipping duplicate select")
+                    return
+                }
                 Log.d(TAG, "Selecting connected UVC device: ${uvcDevice.deviceName}")
+                selectedDeviceName = uvcDevice.deviceName
                 cameraHelper?.selectDevice(uvcDevice)
             } else {
                 Log.w(TAG, "No UVC device found in UsbManager")
@@ -68,14 +75,28 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
         try {
             if (isCameraOpen) {
                 surface?.let {
-                    try {
-                        cameraHelper?.removeSurface(it)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "removeSurface warning", e)
+                    if (it.isValid) {
+                        try {
+                            cameraHelper?.removeSurface(it)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "removeSurface warning", e)
+                        }
                     }
                 }
+                try {
+                    cameraHelper?.stopPreview()
+                } catch (e: Exception) {
+                    Log.w(TAG, "stopPreview warning", e)
+                }
+                try {
+                    cameraHelper?.closeCamera()
+                } catch (e: Exception) {
+                    Log.w(TAG, "closeCamera warning", e)
+                }
             }
-            surface?.release()
+            try {
+                surface?.release()
+            } catch (e: Exception) {}
             surface = null
 
             try {
@@ -85,6 +106,7 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
             }
             cameraHelper = null
             isCameraOpen = false
+            selectedDeviceName = null
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping OtgCameraSource", e)
         } finally {
@@ -104,7 +126,10 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
         override fun onAttach(device: UsbDevice) {
             Log.d(TAG, "UVC onAttach: ${device.deviceName}")
             try {
-                cameraHelper?.selectDevice(device)
+                if (selectedDeviceName != device.deviceName) {
+                    selectedDeviceName = device.deviceName
+                    cameraHelper?.selectDevice(device)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "selectDevice in onAttach failed", e)
             }
@@ -123,8 +148,14 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
             Log.d(TAG, "UVC onCameraOpen: ${device.deviceName}")
             isCameraOpen = true
             try {
+                surface?.let {
+                    if (it.isValid) {
+                        cameraHelper?.addSurface(it, false)
+                    } else {
+                        Log.w(TAG, "Surface is not valid during onCameraOpen")
+                    }
+                }
                 cameraHelper?.startPreview()
-                surface?.let { cameraHelper?.addSurface(it, false) }
             } catch (e: Exception) {
                 Log.e(TAG, "startPreview or addSurface failed", e)
             }
@@ -138,16 +169,19 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
         override fun onDeviceClose(device: UsbDevice) {
             Log.d(TAG, "UVC onDeviceClose: ${device.deviceName}")
             isCameraOpen = false
+            selectedDeviceName = null
         }
 
         override fun onDetach(device: UsbDevice) {
             Log.d(TAG, "UVC onDetach: ${device.deviceName}")
             isCameraOpen = false
+            selectedDeviceName = null
         }
 
         override fun onCancel(device: UsbDevice) {
             Log.w(TAG, "UVC onCancel: permission denied for ${device.deviceName}")
             isCameraOpen = false
+            selectedDeviceName = null
         }
     }
 }

@@ -175,10 +175,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         val defaultUncaughtHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             Log.e(TAG, "Uncaught error in ${thread.name}: ${throwable.message}", throwable)
-            runOnUiThread {
-                Toast.makeText(applicationContext, "Stream error: ${throwable.localizedMessage}", Toast.LENGTH_LONG).show()
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                defaultUncaughtHandler?.uncaughtException(thread, throwable)
+            } else {
+                runOnUiThread {
+                    Toast.makeText(applicationContext, "Stream warning: ${throwable.localizedMessage ?: "Unknown"}", Toast.LENGTH_SHORT).show()
+                }
             }
-            defaultUncaughtHandler?.uncaughtException(thread, throwable)
         }
 
         streamConfig = StreamConfig(this)
@@ -384,11 +387,17 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             return
         }
 
+        if (streamConfig.rtmpUrl.contains("youtube", ignoreCase = true) && streamConfig.streamKey.isBlank()) {
+            Toast.makeText(this, "Please enter your YouTube Stream Key in settings ⚙️", Toast.LENGTH_LONG).show()
+            showSettingsDialog()
+            return
+        }
+
         try {
             btnLive.isEnabled = false
             btnLive.text = getString(R.string.connecting)
 
-            // CRITICAL FIX: Reset any lingering stream state before starting again
+            // Reset any lingering stream state before starting again
             if (stream.isStreaming) {
                 try {
                     stream.stopStream()
@@ -419,8 +428,8 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 }
             }
 
-            // Ensure auto-retry is active on start
-            stream.getStreamClient().setReTries(10)
+            // Setup resilient retry
+            stream.getStreamClient().setReTries(3)
             stream.startStream(endpoint)
         } catch (e: Exception) {
             Log.e(TAG, "startStream failed", e)
@@ -442,7 +451,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private fun selectRearCamera() {
         try {
             if (currentSource == ActiveSource.OTG) {
-                genericStream?.changeVideoSource(camera2Source)
+                val newCam = Camera2Source(this)
+                genericStream?.changeVideoSource(newCam)
+                camera2Source = newCam
                 if (camera2Source.getCameraFacing() != CameraHelper.Facing.BACK) {
                     camera2Source.switchCamera()
                 }
@@ -460,7 +471,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private fun selectFrontCamera() {
         try {
             if (currentSource == ActiveSource.OTG) {
-                genericStream?.changeVideoSource(camera2Source)
+                val newCam = Camera2Source(this)
+                genericStream?.changeVideoSource(newCam)
+                camera2Source = newCam
                 if (camera2Source.getCameraFacing() != CameraHelper.Facing.FRONT) {
                     camera2Source.switchCamera()
                 }
@@ -483,7 +496,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
 
         if (uvcDevice == null) {
-            Toast.makeText(this, "No USB Capture Card detected. Check OTG cable/connection.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "No USB Capture Card detected. Check OTG connection.", Toast.LENGTH_LONG).show()
             return
         }
 
@@ -494,10 +507,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
 
         try {
-            if (otgCameraSource == null) {
-                otgCameraSource = OtgCameraSource(this)
-            }
-            genericStream?.changeVideoSource(otgCameraSource!!)
+            val newOtgSource = OtgCameraSource(this)
+            genericStream?.changeVideoSource(newOtgSource)
+            otgCameraSource = newOtgSource
             currentSource = ActiveSource.OTG
             updateSwitcherUI()
             Toast.makeText(this, "Switched to OTG Video Capture Card", Toast.LENGTH_SHORT).show()
@@ -578,10 +590,16 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
         btnPresetVps.setOnClickListener {
             etRtmpUrl.setText(StreamConfig.DEFAULT_RTMP_URL)
+            etStreamKey.setText(StreamConfig.DEFAULT_STREAM_KEY)
         }
 
         btnPresetYouTube.setOnClickListener {
             etRtmpUrl.setText(StreamConfig.YOUTUBE_RTMP_URL)
+            if (etStreamKey.text.toString().trim() == StreamConfig.DEFAULT_STREAM_KEY) {
+                etStreamKey.setText("")
+            }
+            etStreamKey.hint = "Paste YouTube Stream Key"
+            etStreamKey.requestFocus()
         }
 
         btnSave.setOnClickListener {
@@ -640,10 +658,26 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
     override fun onConnectionFailed(reason: String) {
         Log.w(TAG, "Connection failed: $reason")
-        // If stream client can retry (e.g. Broken pipe or packet send error), let it auto-reconnect!
-        val retried = try {
-            genericStream?.getStreamClient()?.reTry(2000, reason, null) ?: false
-        } catch (e: Exception) {
+
+        // Distinguish configuration/handshake rejection from transient network drops
+        val isConfigOrServerReject = reason.contains("configure stream", ignoreCase = true) ||
+                reason.contains("end of stream", ignoreCase = true) ||
+                reason.contains("refused", ignoreCase = true) ||
+                reason.contains("unresolved", ignoreCase = true) ||
+                reason.contains("unknown host", ignoreCase = true) ||
+                reason.contains("bad name", ignoreCase = true) ||
+                reason.contains("publish", ignoreCase = true) ||
+                reason.contains("auth", ignoreCase = true) ||
+                !isStreaming // Initial connect attempt failed
+
+        // Only retry if it was an active stream that suffered a temporary transport drop
+        val retried = if (!isConfigOrServerReject && isStreaming) {
+            try {
+                genericStream?.getStreamClient()?.reTry(2000, reason, null) ?: false
+            } catch (e: Exception) {
+                false
+            }
+        } else {
             false
         }
 
@@ -652,7 +686,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 btnLive.text = getString(R.string.connecting)
                 tvLiveBadge.text = "RECONNECTING"
                 tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_blue))
-                Toast.makeText(this, "Network glitch ($reason). Reconnecting in 2s...", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Network glitch: Reconnecting...", Toast.LENGTH_SHORT).show()
             }
         } else {
             try {
@@ -672,7 +706,14 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 tvLiveBadge.text = getString(R.string.offline_badge)
                 tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.border_inactive))
 
-                Toast.makeText(this, "Connection failed: $reason", Toast.LENGTH_LONG).show()
+                val userMessage = when {
+                    reason.contains("end of stream", ignoreCase = true) || reason.contains("configure stream", ignoreCase = true) ->
+                        "Server closed connection (End of Stream). Please check RTMP URL & Stream Key in Settings (⚙️)."
+                    reason.contains("refused", ignoreCase = true) || reason.contains("unresolved", ignoreCase = true) ->
+                        "Cannot connect to RTMP server. Check internet & server address."
+                    else -> "Connection failed: $reason"
+                }
+                Toast.makeText(this, userMessage, Toast.LENGTH_LONG).show()
             }
         }
     }

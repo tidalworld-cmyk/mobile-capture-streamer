@@ -63,7 +63,7 @@
         android:layout_marginTop="4dp"
         android:background="#242C3D"
         android:hint="@string/stream_key_hint"
-        android:inputType="textPassword"
+        android:inputType="textVisiblePassword"
         android:paddingHorizontal="12dp"
         android:textColor="@color/white"
         android:textColorHint="@color/text_secondary"

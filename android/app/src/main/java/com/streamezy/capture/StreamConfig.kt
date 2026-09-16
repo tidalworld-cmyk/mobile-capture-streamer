@@ -9,6 +9,7 @@ class StreamConfig(context: Context) {
 
     companion object {
         const val DEFAULT_RTMP_URL = "rtmp://tn.streamezy.in/siva"
+        const val DEFAULT_STREAM_KEY = "live"
         const val YOUTUBE_RTMP_URL = "rtmp://a.rtmp.youtube.com/live2"
         const val BASE_WIDTH = 1280
         const val BASE_HEIGHT = 720
@@ -23,7 +24,7 @@ class StreamConfig(context: Context) {
         set(value) = prefs.edit().putString("rtmp_url", value.trim()).apply()
 
     var streamKey: String
-        get() = prefs.getString("stream_key", "") ?: ""
+        get() = prefs.getString("stream_key", DEFAULT_STREAM_KEY) ?: DEFAULT_STREAM_KEY
         set(value) = prefs.edit().putString("stream_key", value.trim()).apply()
 
     var isPortraitShorts: Boolean
@@ -33,8 +34,9 @@ class StreamConfig(context: Context) {
     val fullStreamEndpoint: String
         get() {
             val base = rtmpUrl.removeSuffix("/")
-            return if (streamKey.isNotBlank()) {
-                "$base/$streamKey"
+            val key = streamKey.trim()
+            return if (key.isNotBlank()) {
+                "$base/$key"
             } else {
                 base
             }
