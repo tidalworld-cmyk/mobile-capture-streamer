@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.hardware.usb.UsbDevice
@@ -252,6 +253,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             camera2Source = Camera2Source(this)
             microphoneSource = MicrophoneSource()
             genericStream = GenericStream(this, this, camera2Source, microphoneSource)
+            genericStream?.getGlInterface()?.autoHandleOrientation = true
 
             // RTMP network resilience configuration to prevent Broken Pipe & Socket drops
             genericStream?.getStreamClient()?.apply {
@@ -269,16 +271,21 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     /**
      * Prevents camera preview from being stretched vertically or horizontally
      * on tall (19.5:9, 20:9) or wide smartphone displays.
+     * External OTG capture cards are kept in clean 16:9 widescreen.
+     * Internal front/rear cameras respect user's 9:16 Shorts or 16:9 Landscape mode.
      */
     private fun adjustAspectRatio(viewWidth: Int, viewHeight: Int) {
         if (viewWidth <= 0 || viewHeight <= 0) return
 
-        val targetRatio: Float = if (streamConfig.isPortraitShorts) {
-            // 9:16 Portrait Shorts (720x1280)
-            720f / 1280f
-        } else {
-            // 16:9 Standard Landscape (1280x720)
-            1280f / 720f
+        val targetRatio: Float = when (currentSource) {
+            ActiveSource.OTG -> 16f / 9f // External HDMI capture is always 16:9 widescreen
+            ActiveSource.FRONT, ActiveSource.REAR -> {
+                if (streamConfig.isPortraitShorts) {
+                    9f / 16f // 9:16 Vertical Shorts
+                } else {
+                    16f / 9f // 16:9 Standard Landscape
+                }
+            }
         }
 
         val viewRatio = viewWidth.toFloat() / viewHeight.toFloat()
@@ -305,14 +312,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         try {
             // Prepare hardware encoders only if not already active
             if (!stream.isOnPreview && !stream.isStreaming) {
-                val rotation = if (streamConfig.isPortraitShorts) 90 else 0
                 val videoPrepared = stream.prepareVideo(
-                    StreamConfig.BASE_WIDTH,
-                    StreamConfig.BASE_HEIGHT,
+                    streamConfig.videoWidth,
+                    streamConfig.videoHeight,
                     StreamConfig.DEFAULT_BITRATE,
                     StreamConfig.DEFAULT_FPS,
                     2,
-                    rotation
+                    0
                 )
                 val audioPrepared = stream.prepareAudio(
                     StreamConfig.DEFAULT_SAMPLE_RATE,
@@ -408,14 +414,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
             // If preview was not active, prepare now
             if (!stream.isOnPreview && !stream.isStreaming) {
-                val rotation = if (streamConfig.isPortraitShorts) 90 else 0
                 stream.prepareVideo(
-                    StreamConfig.BASE_WIDTH,
-                    StreamConfig.BASE_HEIGHT,
+                    streamConfig.videoWidth,
+                    streamConfig.videoHeight,
                     StreamConfig.DEFAULT_BITRATE,
                     StreamConfig.DEFAULT_FPS,
                     2,
-                    rotation
+                    0
                 )
                 stream.prepareAudio(
                     StreamConfig.DEFAULT_SAMPLE_RATE,
@@ -462,6 +467,12 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             }
             currentSource = ActiveSource.REAR
             updateSwitcherUI()
+            textureView.post {
+                adjustAspectRatio(textureView.width, textureView.height)
+            }
+            val resLabel = if (streamConfig.isPortraitShorts) "720x1280 (9:16 Shorts)" else "1280x720 (16:9 HD)"
+            Toast.makeText(this, "Rear Camera: $resLabel", Toast.LENGTH_SHORT).show()
+            updateStatsDisplay()
         } catch (e: Exception) {
             Log.e(TAG, "Switch to Rear failed", e)
             Toast.makeText(this, "Switch to Rear failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
@@ -482,6 +493,12 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             }
             currentSource = ActiveSource.FRONT
             updateSwitcherUI()
+            textureView.post {
+                adjustAspectRatio(textureView.width, textureView.height)
+            }
+            val resLabel = if (streamConfig.isPortraitShorts) "720x1280 (9:16 Shorts)" else "1280x720 (16:9 HD)"
+            Toast.makeText(this, "Front Camera: $resLabel", Toast.LENGTH_SHORT).show()
+            updateStatsDisplay()
         } catch (e: Exception) {
             Log.e(TAG, "Switch to Front failed", e)
             Toast.makeText(this, "Switch to Front failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
@@ -512,7 +529,11 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             otgCameraSource = newOtgSource
             currentSource = ActiveSource.OTG
             updateSwitcherUI()
-            Toast.makeText(this, "Switched to OTG Video Capture Card", Toast.LENGTH_SHORT).show()
+            textureView.post {
+                adjustAspectRatio(textureView.width, textureView.height)
+            }
+            Toast.makeText(this, "OTG Active: 1280x720 (16:9 HD Widescreen)", Toast.LENGTH_SHORT).show()
+            updateStatsDisplay()
         } catch (e: Exception) {
             Log.e(TAG, "OTG Camera switch failed", e)
             Toast.makeText(this, "OTG Card error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
@@ -544,6 +565,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             prepareAndStartPreview()
             val mode = if (streamConfig.isPortraitShorts) "9:16 Shorts (Vertical)" else "16:9 Landscape"
             Toast.makeText(this, "Switched to $mode", Toast.LENGTH_SHORT).show()
+            updateStatsDisplay()
         } catch (e: Exception) {
             Log.e(TAG, "Aspect ratio toggle failed", e)
             Toast.makeText(this, "Aspect ratio error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
@@ -551,8 +573,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     private fun updateStatsDisplay() {
-        val aspect = if (streamConfig.isPortraitShorts) "9:16 Shorts" else "16:9"
-        tvStreamStats.text = "1000 kbps | 30 fps ($aspect)"
+        val res = when (currentSource) {
+            ActiveSource.OTG -> "1280x720 (16:9 OTG)"
+            ActiveSource.REAR, ActiveSource.FRONT -> {
+                if (streamConfig.isPortraitShorts) "720x1280 (9:16 Shorts)" else "1280x720 (16:9)"
+            }
+        }
+        tvStreamStats.text = "1000 kbps | 30 fps | $res"
     }
 
     private fun checkUsbConnectedInitially() {
@@ -721,8 +748,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     override fun onNewBitrate(bitrate: Long) {
         runOnUiThread {
             val kbps = bitrate / 1000
-            val aspect = if (streamConfig.isPortraitShorts) "9:16 Shorts" else "16:9"
-            tvStreamStats.text = "$kbps kbps | 30 fps ($aspect)"
+            val res = when (currentSource) {
+                ActiveSource.OTG -> "1280x720 (16:9 OTG)"
+                ActiveSource.REAR, ActiveSource.FRONT -> {
+                    if (streamConfig.isPortraitShorts) "720x1280 (9:16 Shorts)" else "1280x720 (16:9)"
+                }
+            }
+            tvStreamStats.text = "$kbps kbps | 30 fps | $res"
         }
     }
 
@@ -771,6 +803,19 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 initStreamEngine()
             } else {
                 Toast.makeText(this, "Camera & Audio permissions are required to stream", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        Log.d(TAG, "Device orientation changed: ${newConfig.orientation}")
+        textureView.post {
+            adjustAspectRatio(textureView.width, textureView.height)
+            try {
+                genericStream?.getGlInterface()?.setPreviewResolution(textureView.width, textureView.height)
+            } catch (e: Exception) {
+                Log.e(TAG, "setPreviewResolution failed on orientation change", e)
             }
         }
     }
