@@ -478,18 +478,10 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
         try {
             if (currentSource == ActiveSource.OTG) {
-                try {
-                    otgCameraSource?.stop()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Cleanup OTG source error", e)
-                }
-                otgCameraSource = null
-                val newCam = Camera2Source(this)
-                genericStream?.changeVideoSource(newCam)
-                camera2Source = newCam
                 if (camera2Source.getCameraFacing() != CameraHelper.Facing.BACK) {
                     camera2Source.switchCamera()
                 }
+                genericStream?.changeVideoSource(camera2Source)
             } else if (camera2Source.getCameraFacing() != CameraHelper.Facing.BACK) {
                 camera2Source.switchCamera()
             }
@@ -513,18 +505,10 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
         try {
             if (currentSource == ActiveSource.OTG) {
-                try {
-                    otgCameraSource?.stop()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Cleanup OTG source error", e)
-                }
-                otgCameraSource = null
-                val newCam = Camera2Source(this)
-                genericStream?.changeVideoSource(newCam)
-                camera2Source = newCam
                 if (camera2Source.getCameraFacing() != CameraHelper.Facing.FRONT) {
                     camera2Source.switchCamera()
                 }
+                genericStream?.changeVideoSource(camera2Source)
             } else if (camera2Source.getCameraFacing() != CameraHelper.Facing.FRONT) {
                 camera2Source.switchCamera()
             }
@@ -543,8 +527,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     private fun selectOtgCamera() {
-        if (currentSource == ActiveSource.OTG && otgCameraSource?.isRunning() == true) {
-            Toast.makeText(this, "OTG Camera is already active", Toast.LENGTH_SHORT).show()
+        if (currentSource == ActiveSource.OTG) {
             return
         }
 
@@ -566,16 +549,8 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
 
         try {
-            // Clean up previous otg source instance if any
-            try {
-                otgCameraSource?.stop()
-            } catch (e: Exception) {
-                Log.w(TAG, "Previous OTG stop warning", e)
-            }
-
-            val newOtgSource = OtgCameraSource(this)
-            genericStream?.changeVideoSource(newOtgSource)
-            otgCameraSource = newOtgSource
+            val otg = otgCameraSource ?: OtgCameraSource(this).also { otgCameraSource = it }
+            genericStream?.changeVideoSource(otg)
             currentSource = ActiveSource.OTG
             updateSwitcherUI()
             textureView.post {

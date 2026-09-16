@@ -78,9 +78,6 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
                     Log.w(TAG, "removeSurface warning", e)
                 }
             }
-            try {
-                surface?.release()
-            } catch (e: Exception) {}
             surface = null
 
             try {
