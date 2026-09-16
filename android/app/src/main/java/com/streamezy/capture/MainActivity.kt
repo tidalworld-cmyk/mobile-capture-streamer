@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
@@ -215,11 +216,52 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             camera2Source = Camera2Source(this)
             microphoneSource = MicrophoneSource()
             genericStream = GenericStream(this, this, camera2Source, microphoneSource)
+
+            // RTMP network resilience configuration to prevent Broken Pipe & Socket drops
+            genericStream?.getStreamClient()?.apply {
+                setReTries(10) // Automatically retry up to 10 times on network jitter
+                setSocketTimeout(10000) // 10s socket timeout for cellular/Wi-Fi packet delays
+            }
+
             prepareAndStartPreview()
         } catch (e: Exception) {
             Log.e(TAG, "Init stream engine failed", e)
             Toast.makeText(this, "Camera init failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
         }
+    }
+
+    /**
+     * Prevents camera preview from being stretched vertically or horizontally
+     * on tall (19.5:9, 20:9) or wide smartphone displays.
+     */
+    private fun adjustAspectRatio(viewWidth: Int, viewHeight: Int) {
+        if (viewWidth <= 0 || viewHeight <= 0) return
+
+        val targetRatio: Float = if (streamConfig.isPortraitShorts) {
+            // 9:16 Portrait Shorts (720x1280)
+            720f / 1280f
+        } else {
+            // 16:9 Standard Landscape (1280x720)
+            1280f / 720f
+        }
+
+        val viewRatio = viewWidth.toFloat() / viewHeight.toFloat()
+        val scaleX: Float
+        val scaleY: Float
+
+        if (viewRatio > targetRatio) {
+            // View is wider than target ratio
+            scaleX = targetRatio / viewRatio
+            scaleY = 1.0f
+        } else {
+            // View is taller than target ratio (typical 20:9 Android phones)
+            scaleX = 1.0f
+            scaleY = viewRatio / targetRatio
+        }
+
+        val matrix = Matrix()
+        matrix.setScale(scaleX, scaleY, viewWidth / 2f, viewHeight / 2f)
+        textureView.setTransform(matrix)
     }
 
     private fun prepareAndStartPreview() {
@@ -238,7 +280,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 )
                 val audioPrepared = stream.prepareAudio(
                     StreamConfig.DEFAULT_SAMPLE_RATE,
-                    true,
+                    false, // Universal MONO channel for 100% Android mic & OTG capture card compatibility
                     StreamConfig.DEFAULT_AUDIO_BITRATE
                 )
                 if (!videoPrepared || !audioPrepared) {
@@ -246,15 +288,17 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 }
             }
 
-            // If TextureView surface is already available, start preview directly
+            // If TextureView surface is already available, calculate aspect ratio and start preview
             if (textureView.isAvailable) {
+                adjustAspectRatio(textureView.width, textureView.height)
                 if (!stream.isOnPreview) {
                     stream.startPreview(textureView)
                 }
             } else {
-                // Otherwise attach listener to start as soon as TextureView surface is ready
+                // Otherwise attach listener to adjust and start as soon as TextureView surface is ready
                 textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                     override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+                        adjustAspectRatio(width, height)
                         try {
                             if (genericStream?.isOnPreview == false) {
                                 genericStream?.startPreview(textureView)
@@ -265,6 +309,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                     }
 
                     override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
+                        adjustAspectRatio(width, height)
                         try {
                             genericStream?.getGlInterface()?.setPreviewResolution(width, height)
                         } catch (e: Exception) {
@@ -332,14 +377,17 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 )
                 stream.prepareAudio(
                     StreamConfig.DEFAULT_SAMPLE_RATE,
-                    true,
+                    false, // MONO channel
                     StreamConfig.DEFAULT_AUDIO_BITRATE
                 )
                 if (textureView.isAvailable) {
+                    adjustAspectRatio(textureView.width, textureView.height)
                     stream.startPreview(textureView)
                 }
             }
 
+            // Ensure auto-retry is active on start
+            stream.getStreamClient().setReTries(10)
             stream.startStream(endpoint)
         } catch (e: Exception) {
             Log.e(TAG, "startStream failed", e)
@@ -532,21 +580,41 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     override fun onConnectionFailed(reason: String) {
-        try {
-            genericStream?.stopStream()
+        Log.w(TAG, "Connection failed: $reason")
+        // If stream client can retry (e.g. Broken pipe or packet send error), let it auto-reconnect!
+        val retried = try {
+            genericStream?.getStreamClient()?.reTry(2000, reason, null) ?: false
         } catch (e: Exception) {
-            Log.e(TAG, "stopStream on connection failed error", e)
+            false
         }
-        runOnUiThread {
-            isStreaming = false
-            btnLive.isEnabled = true
-            btnLive.text = getString(R.string.go_live)
-            btnLive.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_red))
 
-            tvLiveBadge.text = getString(R.string.offline_badge)
-            tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.border_inactive))
+        if (retried) {
+            runOnUiThread {
+                btnLive.text = getString(R.string.connecting)
+                tvLiveBadge.text = "RECONNECTING"
+                tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_blue))
+                Toast.makeText(this, "Network glitch ($reason). Reconnecting in 2s...", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            try {
+                genericStream?.stopStream()
+            } catch (e: Exception) {
+                Log.e(TAG, "stopStream on connection failed error", e)
+            }
+            runOnUiThread {
+                isStreaming = false
+                uptimeHandler.removeCallbacks(uptimeRunnable)
+                tvUptime.text = "00:00:00"
 
-            Toast.makeText(this, "Connection failed: $reason", Toast.LENGTH_LONG).show()
+                btnLive.isEnabled = true
+                btnLive.text = getString(R.string.go_live)
+                btnLive.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_red))
+
+                tvLiveBadge.text = getString(R.string.offline_badge)
+                tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.border_inactive))
+
+                Toast.makeText(this, "Connection failed: $reason", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
