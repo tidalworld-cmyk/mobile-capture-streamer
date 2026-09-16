@@ -1,0 +1,18 @@
+﻿<resources>
+    <string name="app_name">StreamEzy Capture</string>
+    <string name="go_live">GO LIVE</string>
+    <string name="stop_stream">STOP STREAM</string>
+    <string name="connecting">CONNECTING...</string>
+    <string name="live_badge">LIVE</string>
+    <string name="offline_badge">OFFLINE</string>
+    <string name="cam_front">Front Cam</string>
+    <string name="cam_rear">Rear Cam</string>
+    <string name="cam_otg">OTG Capture Card</string>
+    <string name="aspect_16_9">16:9 Landscape</string>
+    <string name="aspect_9_16">9:16 Shorts</string>
+    <string name="stream_settings">Stream Settings</string>
+    <string name="rtmp_url_hint">RTMP Server URL (e.g. rtmp://tn.streamezy.in/siva)</string>
+    <string name="stream_key_hint">Stream Key</string>
+    <string name="save">Save &amp; Close</string>
+    <string name="default_rtmp_url">rtmp://tn.streamezy.in/siva</string>
+</resources>
