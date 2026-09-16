@@ -146,34 +146,35 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
         }
 
         override fun onCameraOpen(device: UsbDevice) {
-            Log.d(TAG, "UVC onCameraOpen: ${device.deviceName}, negotiating ${targetWidth}x${targetHeight}@$targetFps")
+            Log.d(TAG, "UVC onCameraOpen: ${device.deviceName}, dimensions: ${targetWidth}x${targetHeight}@$targetFps")
             isCameraOpen = true
             try {
-                // 1. Configure preview size matching the encoder target resolution from supported camera sizes
-                try {
-                    val sizes = cameraHelper?.supportedSizes
-                    val optimalSize = sizes?.firstOrNull { it.width == targetWidth && it.height == targetHeight }
-                        ?: sizes?.firstOrNull { it.width == 1280 && it.height == 720 }
-                        ?: sizes?.firstOrNull()
-                    if (optimalSize != null) {
-                        Log.d(TAG, "Setting UVC preview size to: ${optimalSize.width}x${optimalSize.height}")
-                        cameraHelper?.setPreviewSize(optimalSize)
-                    }
-                } catch (e: Throwable) {
-                    Log.w(TAG, "setPreviewSize notice, continuing", e)
-                }
-
-                // 2. Attach EGL Surface FIRST before initiating UVC native capture pipeline
+                // Attach surface FIRST so the native UVC sink is registered
                 surface?.let {
                     if (it.isValid) {
-                        cameraHelper?.addSurface(it, false)
+                        try {
+                            cameraHelper?.addSurface(it, false)
+                        } catch (e: Throwable) {
+                            Log.w(TAG, "Pre-preview addSurface notice", e)
+                        }
+                    }
+                }
+
+                // Start native preview stream
+                cameraHelper?.startPreview()
+
+                // Re-verify surface is registered with the active preview pipeline
+                surface?.let {
+                    if (it.isValid) {
+                        try {
+                            cameraHelper?.addSurface(it, false)
+                        } catch (e: Throwable) {
+                            Log.w(TAG, "Post-preview addSurface notice", e)
+                        }
                     } else {
                         Log.w(TAG, "Surface is not valid during onCameraOpen")
                     }
                 }
-
-                // 3. Start preview SECOND once destination surface is registered
-                cameraHelper?.startPreview()
             } catch (e: Exception) {
                 Log.e(TAG, "onCameraOpen startPreview or addSurface failed", e)
             }
