@@ -69,6 +69,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private var isStreaming = false
     private var streamStartTime: Long = 0
     private var lastLiveClickTime: Long = 0
+    private var smoothedKbps: Long = 0L
     private val uptimeHandler = Handler(Looper.getMainLooper())
     private val uptimeRunnable = object : Runnable {
         override fun run() {
@@ -580,6 +581,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             }
 
             val otg = otgCameraSource ?: OtgCameraSource(this).also { otgCameraSource = it }
+            otg.create(streamConfig.videoWidth, streamConfig.videoHeight, StreamConfig.DEFAULT_FPS, 0)
             genericStream?.changeVideoSource(otg)
             currentSource = ActiveSource.OTG
             updateSwitcherUI()
@@ -858,14 +860,25 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
     override fun onNewBitrate(bitrate: Long) {
         runOnUiThread {
-            val kbps = bitrate / 1000
+            val currentKbps = bitrate / 1000
+            // Exponential Moving Average filter to eliminate 0 kbps flickering during cellular TCP windowing
+            smoothedKbps = if (smoothedKbps == 0L) {
+                currentKbps
+            } else if (currentKbps == 0L) {
+                // Soft decay during momentary TCP buffer ACK stalls rather than flashing 0
+                (smoothedKbps * 0.8).toLong()
+            } else {
+                ((smoothedKbps * 0.7) + (currentKbps * 0.3)).toLong()
+            }
+            val displayKbps = if (smoothedKbps > 0) smoothedKbps else currentKbps
             val aspect = streamConfig.selectedAspectRatio
             val res = "${streamConfig.videoWidth}x${streamConfig.videoHeight} ($aspect)"
-            tvStreamStats.text = "$kbps kbps | 30 fps | $res"
+            tvStreamStats.text = "$displayKbps kbps | 30 fps | $res"
         }
     }
 
     override fun onDisconnect() {
+        smoothedKbps = 0L
         try {
             if (genericStream?.isStreaming == true) {
                 genericStream?.stopStream()

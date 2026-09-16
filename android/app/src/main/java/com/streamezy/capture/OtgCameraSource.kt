@@ -21,17 +21,33 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
     @Volatile
     private var selectedDeviceName: String? = null
 
+    private var targetWidth: Int = 1280
+    private var targetHeight: Int = 720
+    private var targetFps: Int = 30
+
     companion object {
         private const val TAG = "OtgCameraSource"
     }
 
-    override fun create(width: Int, height: Int, fps: Int, rotation: Int): Boolean = true
+    override fun create(width: Int, height: Int, fps: Int, rotation: Int): Boolean {
+        if (width > 0 && height > 0) {
+            targetWidth = width
+            targetHeight = height
+        }
+        if (fps > 0) {
+            targetFps = fps
+        }
+        Log.d(TAG, "OtgCameraSource configured target dimensions: ${targetWidth}x${targetHeight}@$targetFps fps")
+        return true
+    }
 
     override fun start(surfaceTexture: SurfaceTexture) {
         this.surfaceTexture = surfaceTexture
         if (isRunning()) return
 
         try {
+            // Set default buffer size matching the encoder dimensions for zero-distortion OpenGL rendering
+            surfaceTexture.setDefaultBufferSize(targetWidth, targetHeight)
             surface = Surface(surfaceTexture)
             cameraHelper = CameraHelper()
             cameraHelper?.setStateCallback(stateCallback)
@@ -126,10 +142,17 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
         }
 
         override fun onCameraOpen(device: UsbDevice) {
-            Log.d(TAG, "UVC onCameraOpen: ${device.deviceName}")
+            Log.d(TAG, "UVC onCameraOpen: ${device.deviceName}, negotiating ${targetWidth}x${targetHeight}@$targetFps")
             isCameraOpen = true
             try {
-                cameraHelper?.startPreview()
+                // 1. Configure preview size matching the encoder target resolution
+                try {
+                    cameraHelper?.setPreviewSize(targetWidth, targetHeight)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "setPreviewSize(${targetWidth}x${targetHeight}) notice, continuing", e)
+                }
+
+                // 2. Attach EGL Surface FIRST before initiating UVC native capture pipeline
                 surface?.let {
                     if (it.isValid) {
                         cameraHelper?.addSurface(it, false)
@@ -137,8 +160,11 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
                         Log.w(TAG, "Surface is not valid during onCameraOpen")
                     }
                 }
+
+                // 3. Start preview SECOND once destination surface is registered
+                cameraHelper?.startPreview()
             } catch (e: Exception) {
-                Log.e(TAG, "startPreview or addSurface failed", e)
+                Log.e(TAG, "onCameraOpen startPreview or addSurface failed", e)
             }
         }
 
