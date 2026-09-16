@@ -157,6 +157,8 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
             } catch (e: Exception) {
                 Log.e(TAG, "startPreview or addSurface failed", e)
             }
+        }
+
         override fun onCameraClose(device: UsbDevice) {
             Log.d(TAG, "UVC onCameraClose: ${device.deviceName}")
             isCameraOpen = false
