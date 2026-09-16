@@ -46,7 +46,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private lateinit var tvUptime: TextView
     private lateinit var tvStreamStats: TextView
     private lateinit var tvBatteryStatus: TextView
-    private lateinit var btnAspectRatio: ImageButton
+    private lateinit var layoutRotateHint: LinearLayout
     private lateinit var btnSettings: ImageButton
     private lateinit var tileRearCam: LinearLayout
     private lateinit var tileFrontCam: LinearLayout
@@ -246,7 +246,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         tvUptime = findViewById(R.id.tvUptime)
         tvStreamStats = findViewById(R.id.tvStreamStats)
         tvBatteryStatus = findViewById(R.id.tvBatteryStatus)
-        btnAspectRatio = findViewById(R.id.btnAspectRatio)
+        layoutRotateHint = findViewById(R.id.layoutRotateHint)
         btnSettings = findViewById(R.id.btnSettings)
         tileRearCam = findViewById(R.id.tileRearCam)
         tileFrontCam = findViewById(R.id.tileFrontCam)
@@ -257,6 +257,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         ivOtgIcon = findViewById(R.id.ivOtgIcon)
         btnLive = findViewById(R.id.btnLive)
 
+        updateOrientationHint(resources.configuration.orientation)
         checkUsbConnectedInitially()
     }
 
@@ -279,7 +280,6 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         tileFrontCam.setOnClickListener { selectFrontCamera() }
         tileOtgCam.setOnClickListener { selectOtgCamera() }
 
-        btnAspectRatio.setOnClickListener { toggleAspectRatio() }
         btnSettings.setOnClickListener { showSettingsDialog() }
     }
 
@@ -322,7 +322,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private fun adjustAspectRatio(viewWidth: Int, viewHeight: Int) {
         if (viewWidth <= 0 || viewHeight <= 0) return
 
-        val targetRatio: Float = streamConfig.aspectRatioFloat
+        val targetRatio: Float = 16f / 9f
 
         val viewRatio = viewWidth.toFloat() / viewHeight.toFloat()
         val scaleX: Float
@@ -608,33 +608,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         tvOtgLabel.setTextColor(ContextCompat.getColor(this, if (currentSource == ActiveSource.OTG) R.color.white else R.color.text_secondary))
     }
 
-    private fun toggleAspectRatio() {
-        if (isStreaming) {
-            Toast.makeText(this, "Stop stream before changing aspect ratio", Toast.LENGTH_SHORT).show()
-            return
-        }
-        try {
-            val nextRatio = when (streamConfig.selectedAspectRatio) {
-                "16:9" -> "9:16"
-                "9:16" -> "4:3"
-                else -> "16:9"
+    private fun updateOrientationHint(orientation: Int) {
+        if (::layoutRotateHint.isInitialized) {
+            layoutRotateHint.visibility = if (orientation == Configuration.ORIENTATION_PORTRAIT) {
+                android.view.View.VISIBLE
+            } else {
+                android.view.View.GONE
             }
-            streamConfig.selectedAspectRatio = nextRatio
-            val stream = genericStream ?: return
-            if (stream.isOnPreview) {
-                stream.stopPreview()
-            }
-            prepareAndStartPreview()
-            val mode = when (nextRatio) {
-                "9:16" -> "9:16 Shorts (Vertical)"
-                "4:3" -> "4:3 Standard"
-                else -> "16:9 Landscape"
-            }
-            Toast.makeText(this, "Aspect Ratio: $mode", Toast.LENGTH_SHORT).show()
-            updateStatsDisplay()
-        } catch (e: Exception) {
-            Log.e(TAG, "Aspect ratio toggle failed", e)
-            Toast.makeText(this, "Aspect ratio error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -930,6 +910,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         Log.d(TAG, "Device orientation changed: ${newConfig.orientation}")
+        updateOrientationHint(newConfig.orientation)
         textureView.post {
             adjustAspectRatio(textureView.width, textureView.height)
             try {

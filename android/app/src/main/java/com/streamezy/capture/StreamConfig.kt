@@ -24,35 +24,23 @@ class StreamConfig(context: Context) {
     }
 
     var selectedAspectRatio: String
-        get() = prefs.getString("selected_aspect_ratio", "16:9") ?: "16:9"
-        set(value) = prefs.edit().putString("selected_aspect_ratio", value).apply()
+        get() = "16:9"
+        set(_) {
+            prefs.edit().putString("selected_aspect_ratio", "16:9").apply()
+        }
 
     var isPortraitShorts: Boolean
-        get() = selectedAspectRatio == "9:16"
-        set(value) {
-            selectedAspectRatio = if (value) "9:16" else "16:9"
-        }
+        get() = false
+        set(_) {}
 
     val videoWidth: Int
-        get() = when (selectedAspectRatio) {
-            "9:16" -> SHORTS_WIDTH
-            "4:3" -> STANDARD_WIDTH
-            else -> LANDSCAPE_WIDTH
-        }
+        get() = LANDSCAPE_WIDTH // 1280
 
     val videoHeight: Int
-        get() = when (selectedAspectRatio) {
-            "9:16" -> SHORTS_HEIGHT
-            "4:3" -> STANDARD_HEIGHT
-            else -> LANDSCAPE_HEIGHT
-        }
+        get() = LANDSCAPE_HEIGHT // 720
 
     val aspectRatioFloat: Float
-        get() = when (selectedAspectRatio) {
-            "9:16" -> 9f / 16f
-            "4:3" -> 4f / 3f
-            else -> 16f / 9f
-        }
+        get() = 16f / 9f
 
     var rtmpUrl: String
         get() = prefs.getString("rtmp_url", DEFAULT_RTMP_URL) ?: DEFAULT_RTMP_URL
