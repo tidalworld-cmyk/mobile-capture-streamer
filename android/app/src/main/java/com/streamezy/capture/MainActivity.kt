@@ -34,7 +34,8 @@ import com.pedro.common.ConnectChecker
 import com.pedro.encoder.input.sources.audio.MicrophoneSource
 import com.pedro.encoder.input.sources.video.Camera2Source
 import com.pedro.encoder.input.video.CameraHelper
-import com.pedro.extrasources.CameraUvcSource
+import android.app.PendingIntent
+import android.os.Build
 import com.pedro.library.generic.GenericStream
 
 class MainActivity : AppCompatActivity(), ConnectChecker {
@@ -59,7 +60,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private var genericStream: GenericStream? = null
     private lateinit var camera2Source: Camera2Source
     private lateinit var microphoneSource: MicrophoneSource
-    private var cameraUvcSource: CameraUvcSource? = null
+    private var otgCameraSource: OtgCameraSource? = null
 
     private enum class ActiveSource { REAR, FRONT, OTG }
     private var currentSource = ActiveSource.REAR
@@ -85,8 +86,15 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                    }
                     Toast.makeText(context, "USB Video Capture Card Connected!", Toast.LENGTH_SHORT).show()
                     updateOtgAvailability(true)
+                    device?.let { requestUsbPermissionIfNeeded(it) }
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     Toast.makeText(context, "USB Video Capture Card Disconnected", Toast.LENGTH_SHORT).show()
@@ -95,7 +103,31 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                         selectRearCamera()
                     }
                 }
+                ACTION_USB_PERMISSION -> {
+                    val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                    if (granted) {
+                        Toast.makeText(context, "USB Capture Card Authorized", Toast.LENGTH_SHORT).show()
+                        updateOtgAvailability(true)
+                    } else {
+                        Toast.makeText(context, "USB Permission Denied for Capture Card", Toast.LENGTH_LONG).show()
+                    }
+                }
             }
+        }
+    }
+
+    private fun requestUsbPermissionIfNeeded(device: UsbDevice) {
+        val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager ?: return
+        if (!usbManager.hasPermission(device)) {
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            val permissionIntent = PendingIntent.getBroadcast(
+                this, 0, Intent(ACTION_USB_PERMISSION), flags
+            )
+            usbManager.requestPermission(device, permissionIntent)
         }
     }
 
@@ -127,6 +159,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     companion object {
         private const val TAG = "StreamEzy"
         private const val PERMISSIONS_REQUEST_CODE = 101
+        private const val ACTION_USB_PERMISSION = "com.streamezy.capture.USB_PERMISSION"
         private val REQUIRED_PERMISSIONS = arrayOf(
             Manifest.permission.CAMERA,
             Manifest.permission.RECORD_AUDIO
@@ -409,10 +442,10 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private fun selectRearCamera() {
         try {
             if (currentSource == ActiveSource.OTG) {
+                genericStream?.changeVideoSource(camera2Source)
                 if (camera2Source.getCameraFacing() != CameraHelper.Facing.BACK) {
                     camera2Source.switchCamera()
                 }
-                genericStream?.changeVideoSource(camera2Source)
             } else if (camera2Source.getCameraFacing() != CameraHelper.Facing.BACK) {
                 camera2Source.switchCamera()
             }
@@ -427,10 +460,10 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private fun selectFrontCamera() {
         try {
             if (currentSource == ActiveSource.OTG) {
+                genericStream?.changeVideoSource(camera2Source)
                 if (camera2Source.getCameraFacing() != CameraHelper.Facing.FRONT) {
                     camera2Source.switchCamera()
                 }
-                genericStream?.changeVideoSource(camera2Source)
             } else if (camera2Source.getCameraFacing() != CameraHelper.Facing.FRONT) {
                 camera2Source.switchCamera()
             }
@@ -443,17 +476,34 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     private fun selectOtgCamera() {
+        val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager
+        val uvcDevice = usbManager?.deviceList?.values?.firstOrNull { dev ->
+            dev.deviceClass == 14 || dev.deviceClass == 239 ||
+            (0 until dev.interfaceCount).any { i -> dev.getInterface(i).interfaceClass == 14 }
+        }
+
+        if (uvcDevice == null) {
+            Toast.makeText(this, "No USB Capture Card detected. Check OTG cable/connection.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        if (!usbManager.hasPermission(uvcDevice)) {
+            Toast.makeText(this, "Requesting USB permission for capture card...", Toast.LENGTH_SHORT).show()
+            requestUsbPermissionIfNeeded(uvcDevice)
+            return
+        }
+
         try {
-            if (cameraUvcSource == null) {
-                cameraUvcSource = CameraUvcSource()
+            if (otgCameraSource == null) {
+                otgCameraSource = OtgCameraSource(this)
             }
-            genericStream?.changeVideoSource(cameraUvcSource!!)
+            genericStream?.changeVideoSource(otgCameraSource!!)
             currentSource = ActiveSource.OTG
             updateSwitcherUI()
             Toast.makeText(this, "Switched to OTG Video Capture Card", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Log.e(TAG, "OTG Camera switch failed", e)
-            Toast.makeText(this, "OTG Card error: ${e.localizedMessage}. Ensure OTG is turned on.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "OTG Card error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -496,10 +546,14 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private fun checkUsbConnectedInitially() {
         val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager
         val deviceList = usbManager?.deviceList
-        val hasUvc = deviceList?.values?.any { dev ->
+        val uvcDevice = deviceList?.values?.firstOrNull { dev ->
             dev.deviceClass == 14 || dev.deviceClass == 239 || (0 until dev.interfaceCount).any { i -> dev.getInterface(i).interfaceClass == 14 }
-        } ?: false
+        }
+        val hasUvc = uvcDevice != null
         updateOtgAvailability(hasUvc)
+        if (uvcDevice != null) {
+            requestUsbPermissionIfNeeded(uvcDevice)
+        }
     }
 
     private fun updateOtgAvailability(available: Boolean) {
@@ -544,8 +598,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         val filter = IntentFilter().apply {
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+            addAction(ACTION_USB_PERMISSION)
         }
-        registerReceiver(usbReceiver, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(usbReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(usbReceiver, filter)
+        }
     }
 
     private fun registerBatteryReceiver() {
@@ -708,6 +767,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             unregisterReceiver(batteryReceiver)
         } catch (e: Exception) {}
         uptimeHandler.removeCallbacks(uptimeRunnable)
+        try {
+            otgCameraSource?.stop()
+        } catch (e: Exception) {}
         try {
             if (genericStream?.isStreaming == true) {
                 genericStream?.stopStream()
