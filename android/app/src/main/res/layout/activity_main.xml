@@ -66,9 +66,20 @@
             android:id="@+id/tvStreamStats"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="12dp"
+            android:layout_marginEnd="10dp"
             android:text="1000 kbps | 30 fps"
             android:textColor="@color/text_primary"
+            android:textSize="12sp"
+            android:fontFamily="monospace" />
+
+        <!-- Live Battery & Charging Status Indicator -->
+        <TextView
+            android:id="@+id/tvBatteryStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="10dp"
+            android:text="⚡ --%"
+            android:textColor="@color/accent_green"
             android:textSize="12sp"
             android:fontFamily="monospace" />
 

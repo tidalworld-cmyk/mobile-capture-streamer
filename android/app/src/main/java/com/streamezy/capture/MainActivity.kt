@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.os.BatteryManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -41,6 +42,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private lateinit var tvLiveBadge: TextView
     private lateinit var tvUptime: TextView
     private lateinit var tvStreamStats: TextView
+    private lateinit var tvBatteryStatus: TextView
     private lateinit var btnAspectRatio: ImageButton
     private lateinit var btnSettings: ImageButton
     private lateinit var tileRearCam: LinearLayout
@@ -63,6 +65,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
     private var isStreaming = false
     private var streamStartTime: Long = 0
+    private var lastLiveClickTime: Long = 0
     private val uptimeHandler = Handler(Looper.getMainLooper())
     private val uptimeRunnable = object : Runnable {
         override fun run() {
@@ -91,6 +94,31 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                         selectRearCamera()
                     }
                 }
+            }
+        }
+    }
+
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+            val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+            val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                             status == BatteryManager.BATTERY_STATUS_FULL
+
+            val batteryPct = if (level >= 0 && scale > 0) (level * 100 / scale) else 0
+
+            if (isCharging) {
+                tvBatteryStatus.text = "⚡ $batteryPct% (Charging)"
+                tvBatteryStatus.setTextColor(ContextCompat.getColor(context, R.color.accent_green))
+            } else {
+                tvBatteryStatus.text = "🔋 $batteryPct%"
+                tvBatteryStatus.setTextColor(
+                    ContextCompat.getColor(
+                        context,
+                        if (batteryPct <= 20) R.color.accent_red else R.color.text_primary
+                    )
+                )
             }
         }
     }
@@ -124,6 +152,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         initViews()
         setupListeners()
         registerUsbReceiver()
+        registerBatteryReceiver()
 
         if (allPermissionsGranted()) {
             initStreamEngine()
@@ -137,6 +166,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         tvLiveBadge = findViewById(R.id.tvLiveBadge)
         tvUptime = findViewById(R.id.tvUptime)
         tvStreamStats = findViewById(R.id.tvStreamStats)
+        tvBatteryStatus = findViewById(R.id.tvBatteryStatus)
         btnAspectRatio = findViewById(R.id.btnAspectRatio)
         btnSettings = findViewById(R.id.btnSettings)
         tileRearCam = findViewById(R.id.tileRearCam)
@@ -153,6 +183,12 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
     private fun setupListeners() {
         btnLive.setOnClickListener {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastLiveClickTime < 1200) {
+                return@setOnClickListener // Debounce fast clicks
+            }
+            lastLiveClickTime = now
+
             if (isStreaming) {
                 stopLiveStream()
             } else {
@@ -273,6 +309,15 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         try {
             btnLive.isEnabled = false
             btnLive.text = getString(R.string.connecting)
+
+            // CRITICAL FIX: Reset any lingering stream state before starting again
+            if (stream.isStreaming) {
+                try {
+                    stream.stopStream()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Cleanup previous stream state before start", e)
+                }
+            }
 
             // If preview was not active, prepare now
             if (!stream.isOnPreview && !stream.isStreaming) {
@@ -455,6 +500,11 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         registerReceiver(usbReceiver, filter)
     }
 
+    private fun registerBatteryReceiver() {
+        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        registerReceiver(batteryReceiver, filter)
+    }
+
     // --- ConnectChecker Callbacks ---
 
     override fun onConnectionStarted(url: String) {
@@ -482,6 +532,11 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     override fun onConnectionFailed(reason: String) {
+        try {
+            genericStream?.stopStream()
+        } catch (e: Exception) {
+            Log.e(TAG, "stopStream on connection failed error", e)
+        }
         runOnUiThread {
             isStreaming = false
             btnLive.isEnabled = true
@@ -504,6 +559,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     override fun onDisconnect() {
+        try {
+            if (genericStream?.isStreaming == true) {
+                genericStream?.stopStream()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "stopStream onDisconnect error", e)
+        }
         runOnUiThread {
             isStreaming = false
             uptimeHandler.removeCallbacks(uptimeRunnable)
@@ -519,8 +581,11 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     override fun onAuthError() {
+        try {
+            genericStream?.stopStream()
+        } catch (e: Exception) {}
         runOnUiThread {
-            Toast.makeText(this, "RTMP Authentication Error", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "RTMP Authentication Error: check stream key", Toast.LENGTH_SHORT).show()
             onDisconnect()
         }
     }
@@ -570,6 +635,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         super.onDestroy()
         try {
             unregisterReceiver(usbReceiver)
+        } catch (e: Exception) {}
+        try {
+            unregisterReceiver(batteryReceiver)
         } catch (e: Exception) {}
         uptimeHandler.removeCallbacks(uptimeRunnable)
         try {
