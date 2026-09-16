@@ -37,9 +37,6 @@ android {
     kotlinOptions {
         jvmTarget = '17'
     }
-    buildFeatures {
-        viewBinding true
-    }
     packaging {
         jniLibs {
             pickFirsts += ['**/libc++_shared.so']
@@ -54,8 +51,8 @@ dependencies {
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
 
     // RootEncoder RTMP & Stream Engine
-    implementation 'com.github.pedroSG94.RootEncoder:library:2.4.5'
-    implementation 'com.github.pedroSG94.RootEncoder:extra-sources:2.4.5'
+    implementation 'com.github.pedroSG94.RootEncoder:library:2.8.1'
+    implementation 'com.github.pedroSG94.RootEncoder:extra-sources:2.8.1'
     implementation 'com.herohan:UVCAndroid:1.0.13'
 
     // Coroutines
