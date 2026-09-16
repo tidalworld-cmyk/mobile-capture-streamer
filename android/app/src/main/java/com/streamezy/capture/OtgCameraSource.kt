@@ -71,25 +71,11 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
 
     override fun stop() {
         try {
-            if (isCameraOpen) {
-                surface?.let {
-                    if (it.isValid) {
-                        try {
-                            cameraHelper?.removeSurface(it)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "removeSurface warning", e)
-                        }
-                    }
-                }
+            surface?.let {
                 try {
-                    cameraHelper?.stopPreview()
+                    cameraHelper?.removeSurface(it)
                 } catch (e: Exception) {
-                    Log.w(TAG, "stopPreview warning", e)
-                }
-                try {
-                    cameraHelper?.closeCamera()
-                } catch (e: Exception) {
-                    Log.w(TAG, "closeCamera warning", e)
+                    Log.w(TAG, "removeSurface warning", e)
                 }
             }
             try {
@@ -146,6 +132,7 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
             Log.d(TAG, "UVC onCameraOpen: ${device.deviceName}")
             isCameraOpen = true
             try {
+                cameraHelper?.startPreview()
                 surface?.let {
                     if (it.isValid) {
                         cameraHelper?.addSurface(it, false)
@@ -153,7 +140,6 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
                         Log.w(TAG, "Surface is not valid during onCameraOpen")
                     }
                 }
-                cameraHelper?.startPreview()
             } catch (e: Exception) {
                 Log.e(TAG, "startPreview or addSurface failed", e)
             }

@@ -172,15 +172,18 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
 
-        // Prevent crashes from uncaught thread exceptions
-        val defaultUncaughtHandler = Thread.getDefaultUncaughtExceptionHandler()
+        // Universal crash shield to prevent app minimize / closure
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            Log.e(TAG, "Uncaught error in ${thread.name}: ${throwable.message}", throwable)
-            if (Looper.myLooper() == Looper.getMainLooper()) {
-                defaultUncaughtHandler?.uncaughtException(thread, throwable)
-            } else {
-                runOnUiThread {
-                    Toast.makeText(applicationContext, "Stream warning: ${throwable.localizedMessage ?: "Unknown"}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Crash shielded in ${thread.name}: ${throwable.message}", throwable)
+            runOnUiThread {
+                try {
+                    Toast.makeText(applicationContext, "Stream recovered: ${throwable.localizedMessage ?: "Notice"}", Toast.LENGTH_SHORT).show()
+                    btnLive.isEnabled = true
+                    if (!isStreaming) {
+                        btnLive.text = getString(R.string.go_live)
+                    }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "UI toast error in uncaught handler", e)
                 }
             }
         }
@@ -196,6 +199,21 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             initStreamEngine()
         } else {
             ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSIONS_REQUEST_CODE)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+            }
+            updateOtgAvailability(true)
+            device?.let { requestUsbPermissionIfNeeded(it) }
         }
     }
 
@@ -408,35 +426,38 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 }
             }
 
-            // If preview was not active, prepare now
-            if (!stream.isOnPreview && !stream.isStreaming) {
-                stream.prepareVideo(
-                    streamConfig.videoWidth,
-                    streamConfig.videoHeight,
-                    StreamConfig.DEFAULT_BITRATE,
-                    StreamConfig.DEFAULT_FPS,
-                    2,
-                    0
-                )
-                stream.prepareAudio(
-                    StreamConfig.DEFAULT_SAMPLE_RATE,
-                    false, // MONO channel
-                    StreamConfig.DEFAULT_AUDIO_BITRATE
-                )
-                if (textureView.isAvailable) {
-                    adjustAspectRatio(textureView.width, textureView.height)
-                    stream.startPreview(textureView)
-                }
+            // Always ensure video & audio encoders are prepared before starting stream
+            val videoPrepared = stream.prepareVideo(
+                streamConfig.videoWidth,
+                streamConfig.videoHeight,
+                StreamConfig.DEFAULT_BITRATE,
+                StreamConfig.DEFAULT_FPS,
+                2,
+                0
+            )
+            val audioPrepared = stream.prepareAudio(
+                StreamConfig.DEFAULT_SAMPLE_RATE,
+                false, // MONO channel
+                StreamConfig.DEFAULT_AUDIO_BITRATE
+            )
+
+            if (!videoPrepared || !audioPrepared) {
+                Log.w(TAG, "Encoder preparation returned false (v=$videoPrepared, a=$audioPrepared)")
+            }
+
+            if (!stream.isOnPreview && textureView.isAvailable) {
+                adjustAspectRatio(textureView.width, textureView.height)
+                stream.startPreview(textureView)
             }
 
             // Setup resilient retry
-            stream.getStreamClient().setReTries(3)
+            stream.getStreamClient().setReTries(5)
             stream.startStream(endpoint)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "startStream failed", e)
             btnLive.isEnabled = true
             btnLive.text = getString(R.string.go_live)
-            Toast.makeText(this, "Start live failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Start live failed: ${e.localizedMessage ?: "Unexpected error"}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -450,8 +471,17 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     private fun selectRearCamera() {
+        if (currentSource == ActiveSource.REAR && camera2Source.getCameraFacing() == CameraHelper.Facing.BACK) {
+            return
+        }
         try {
             if (currentSource == ActiveSource.OTG) {
+                try {
+                    otgCameraSource?.stop()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Cleanup OTG source error", e)
+                }
+                otgCameraSource = null
                 val newCam = Camera2Source(this)
                 genericStream?.changeVideoSource(newCam)
                 camera2Source = newCam
@@ -469,15 +499,24 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             val resLabel = "${streamConfig.videoWidth}x${streamConfig.videoHeight} (${streamConfig.selectedAspectRatio})"
             Toast.makeText(this, "Rear Camera: $resLabel", Toast.LENGTH_SHORT).show()
             updateStatsDisplay()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Switch to Rear failed", e)
-            Toast.makeText(this, "Switch to Rear failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Switch to Rear failed: ${e.localizedMessage ?: "Unknown error"}", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun selectFrontCamera() {
+        if (currentSource == ActiveSource.FRONT && camera2Source.getCameraFacing() == CameraHelper.Facing.FRONT) {
+            return
+        }
         try {
             if (currentSource == ActiveSource.OTG) {
+                try {
+                    otgCameraSource?.stop()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Cleanup OTG source error", e)
+                }
+                otgCameraSource = null
                 val newCam = Camera2Source(this)
                 genericStream?.changeVideoSource(newCam)
                 camera2Source = newCam
@@ -495,13 +534,18 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             val resLabel = "${streamConfig.videoWidth}x${streamConfig.videoHeight} (${streamConfig.selectedAspectRatio})"
             Toast.makeText(this, "Front Camera: $resLabel", Toast.LENGTH_SHORT).show()
             updateStatsDisplay()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Switch to Front failed", e)
-            Toast.makeText(this, "Switch to Front failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Switch to Front failed: ${e.localizedMessage ?: "Unknown error"}", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun selectOtgCamera() {
+        if (currentSource == ActiveSource.OTG && otgCameraSource?.isRunning() == true) {
+            Toast.makeText(this, "OTG Camera is already active", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager
         val uvcDevice = usbManager?.deviceList?.values?.firstOrNull { dev ->
             dev.deviceClass == 14 || dev.deviceClass == 239 ||
@@ -520,6 +564,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
 
         try {
+            // Clean up previous otg source instance if any
+            try {
+                otgCameraSource?.stop()
+            } catch (e: Exception) {
+                Log.w(TAG, "Previous OTG stop warning", e)
+            }
+
             val newOtgSource = OtgCameraSource(this)
             genericStream?.changeVideoSource(newOtgSource)
             otgCameraSource = newOtgSource
@@ -531,9 +582,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             val resLabel = "${streamConfig.videoWidth}x${streamConfig.videoHeight} (${streamConfig.selectedAspectRatio})"
             Toast.makeText(this, "OTG Active: $resLabel", Toast.LENGTH_SHORT).show()
             updateStatsDisplay()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "OTG Camera switch failed", e)
-            Toast.makeText(this, "OTG Card error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "OTG Card error: ${e.localizedMessage ?: "Unknown error"}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -723,23 +774,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     override fun onConnectionFailed(reason: String) {
-        Log.w(TAG, "Connection failed: $reason")
+        val safeReason = reason ?: ""
+        Log.w(TAG, "Connection failed: $safeReason")
 
-        // Distinguish configuration/handshake rejection from transient network drops
-        val isConfigOrServerReject = reason.contains("configure stream", ignoreCase = true) ||
-                reason.contains("end of stream", ignoreCase = true) ||
-                reason.contains("refused", ignoreCase = true) ||
-                reason.contains("unresolved", ignoreCase = true) ||
-                reason.contains("unknown host", ignoreCase = true) ||
-                reason.contains("bad name", ignoreCase = true) ||
-                reason.contains("publish", ignoreCase = true) ||
-                reason.contains("auth", ignoreCase = true) ||
-                !isStreaming // Initial connect attempt failed
-
-        // Only retry if it was an active stream that suffered a temporary transport drop
-        val retried = if (!isConfigOrServerReject && isStreaming) {
+        // If broadcast was active, ALWAYS attempt resilient reconnect (handles camera switch pauses)
+        val retried = if (isStreaming) {
             try {
-                genericStream?.getStreamClient()?.reTry(2000, reason, null) ?: false
+                genericStream?.getStreamClient()?.reTry(1500, safeReason, null) ?: false
             } catch (e: Exception) {
                 false
             }
@@ -752,7 +793,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 btnLive.text = getString(R.string.connecting)
                 tvLiveBadge.text = "RECONNECTING"
                 tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_blue))
-                Toast.makeText(this, "Network glitch: Reconnecting...", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Reconnecting live stream...", Toast.LENGTH_SHORT).show()
             }
         } else {
             try {
@@ -773,11 +814,11 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.border_inactive))
 
                 val userMessage = when {
-                    reason.contains("end of stream", ignoreCase = true) || reason.contains("configure stream", ignoreCase = true) ->
-                        "Server closed connection (End of Stream). Please check RTMP URL & Stream Key in Settings (⚙️)."
-                    reason.contains("refused", ignoreCase = true) || reason.contains("unresolved", ignoreCase = true) ->
+                    safeReason.contains("end of stream", ignoreCase = true) || safeReason.contains("configure stream", ignoreCase = true) ->
+                        "Server closed connection. Please check RTMP URL & Stream Key in Settings (⚙️)."
+                    safeReason.contains("refused", ignoreCase = true) || safeReason.contains("unresolved", ignoreCase = true) ->
                         "Cannot connect to RTMP server. Check internet & server address."
-                    else -> "Connection failed: $reason"
+                    else -> "Connection failed: $safeReason"
                 }
                 Toast.makeText(this, userMessage, Toast.LENGTH_LONG).show()
             }
