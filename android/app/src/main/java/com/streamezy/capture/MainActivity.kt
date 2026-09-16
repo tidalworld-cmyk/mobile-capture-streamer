@@ -239,21 +239,6 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
     }
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSIONS_REQUEST_CODE) {
-            if (allPermissionsGranted()) {
-                initStreamEngine()
-            } else {
-                Toast.makeText(this, "Camera & Audio permissions are required for live streaming", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-
     private fun initViews() {
         textureView = findViewById(R.id.textureView)
         tvLiveBadge = findViewById(R.id.tvLiveBadge)
