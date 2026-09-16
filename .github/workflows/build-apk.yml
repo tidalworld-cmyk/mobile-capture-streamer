@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -31,7 +33,19 @@ jobs:
       - name: Build Debug APK
         working-directory: ./android
         run: |
-          gradle assembleDebug --stacktrace
+          gradle assembleDebug --stacktrace 2>&1 | tee ../build.log || true
+          if [ ! -f app/build/outputs/apk/debug/*.apk ]; then
+            echo "Build failed. Pushing failure log..."
+            cd ..
+            git config user.name "github-actions"
+            git config user.email "github-actions@github.com"
+            git checkout -b build-error-log
+            tail -n 150 build.log > build_failure.txt
+            git add build_failure.txt
+            git commit -m "debug: build failure log"
+            git push -f origin build-error-log
+            exit 1
+          fi
 
       - name: Rename APK for Easy Identification
         run: |
