@@ -1,4 +1,4 @@
-﻿package com.streamezy.capture
+package com.streamezy.capture
 
 import android.Manifest
 import android.content.BroadcastReceiver
@@ -202,15 +202,15 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         val videoPrepared = stream.prepareVideo(
             streamConfig.width,
             streamConfig.height,
-            StreamConfig.DEFAULT_BITRATE,
             StreamConfig.DEFAULT_FPS,
+            StreamConfig.DEFAULT_BITRATE,
             2
         )
 
         val audioPrepared = stream.prepareAudio(
+            StreamConfig.DEFAULT_AUDIO_BITRATE,
             StreamConfig.DEFAULT_SAMPLE_RATE,
-            true,
-            StreamConfig.DEFAULT_AUDIO_BITRATE
+            true
         )
 
         if (videoPrepared && audioPrepared) {
