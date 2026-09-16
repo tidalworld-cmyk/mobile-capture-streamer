@@ -29,7 +29,7 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
         private const val TAG = "OtgCameraSource"
     }
 
-    override fun create(width: Int, height: Int, fps: Int, rotation: Int): Boolean {
+    fun setTargetDimensions(width: Int, height: Int, fps: Int) {
         if (width > 0 && height > 0) {
             targetWidth = width
             targetHeight = height
@@ -37,7 +37,11 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
         if (fps > 0) {
             targetFps = fps
         }
-        Log.d(TAG, "OtgCameraSource configured target dimensions: ${targetWidth}x${targetHeight}@$targetFps fps")
+        Log.d(TAG, "OtgCameraSource setTargetDimensions: ${targetWidth}x${targetHeight}@$targetFps fps")
+    }
+
+    override fun create(width: Int, height: Int, fps: Int, rotation: Int): Boolean {
+        setTargetDimensions(width, height, fps)
         return true
     }
 
@@ -145,11 +149,18 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
             Log.d(TAG, "UVC onCameraOpen: ${device.deviceName}, negotiating ${targetWidth}x${targetHeight}@$targetFps")
             isCameraOpen = true
             try {
-                // 1. Configure preview size matching the encoder target resolution
+                // 1. Configure preview size matching the encoder target resolution from supported camera sizes
                 try {
-                    cameraHelper?.setPreviewSize(targetWidth, targetHeight)
+                    val sizes = cameraHelper?.supportedSizes
+                    val optimalSize = sizes?.firstOrNull { it.width == targetWidth && it.height == targetHeight }
+                        ?: sizes?.firstOrNull { it.width == 1280 && it.height == 720 }
+                        ?: sizes?.firstOrNull()
+                    if (optimalSize != null) {
+                        Log.d(TAG, "Setting UVC preview size to: ${optimalSize.width}x${optimalSize.height}")
+                        cameraHelper?.setPreviewSize(optimalSize)
+                    }
                 } catch (e: Throwable) {
-                    Log.w(TAG, "setPreviewSize(${targetWidth}x${targetHeight}) notice, continuing", e)
+                    Log.w(TAG, "setPreviewSize notice, continuing", e)
                 }
 
                 // 2. Attach EGL Surface FIRST before initiating UVC native capture pipeline

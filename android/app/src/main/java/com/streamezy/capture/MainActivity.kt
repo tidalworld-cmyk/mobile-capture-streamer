@@ -581,7 +581,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             }
 
             val otg = otgCameraSource ?: OtgCameraSource(this).also { otgCameraSource = it }
-            otg.create(streamConfig.videoWidth, streamConfig.videoHeight, StreamConfig.DEFAULT_FPS, 0)
+            otg.setTargetDimensions(streamConfig.videoWidth, streamConfig.videoHeight, StreamConfig.DEFAULT_FPS)
             genericStream?.changeVideoSource(otg)
             currentSource = ActiveSource.OTG
             updateSwitcherUI()
