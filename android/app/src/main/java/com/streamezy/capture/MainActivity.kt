@@ -118,17 +118,24 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     private fun requestUsbPermissionIfNeeded(device: UsbDevice) {
-        val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager ?: return
-        if (!usbManager.hasPermission(device)) {
-            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            } else {
-                PendingIntent.FLAG_UPDATE_CURRENT
+        try {
+            val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager ?: return
+            if (!usbManager.hasPermission(device)) {
+                val intent = Intent(ACTION_USB_PERMISSION).apply {
+                    setPackage(packageName)
+                }
+                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                } else {
+                    PendingIntent.FLAG_UPDATE_CURRENT
+                }
+                val permissionIntent = PendingIntent.getBroadcast(
+                    this, 0, intent, flags
+                )
+                usbManager.requestPermission(device, permissionIntent)
             }
-            val permissionIntent = PendingIntent.getBroadcast(
-                this, 0, Intent(ACTION_USB_PERMISSION), flags
-            )
-            usbManager.requestPermission(device, permissionIntent)
+        } catch (e: Throwable) {
+            Log.e(TAG, "requestUsbPermissionIfNeeded failed", e)
         }
     }
 
@@ -169,51 +176,81 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        setContentView(R.layout.activity_main)
+        try {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            setContentView(R.layout.activity_main)
 
-        // Universal crash shield to prevent app minimize / closure
-        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            Log.e(TAG, "Crash shielded in ${thread.name}: ${throwable.message}", throwable)
-            runOnUiThread {
-                try {
-                    Toast.makeText(applicationContext, "Stream recovered: ${throwable.localizedMessage ?: "Notice"}", Toast.LENGTH_SHORT).show()
-                    btnLive.isEnabled = true
-                    if (!isStreaming) {
-                        btnLive.text = getString(R.string.go_live)
+            val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+                Log.e(TAG, "Crash shielded in ${thread.name}: ${throwable.message}", throwable)
+                val msg = throwable.localizedMessage ?: "Notice"
+                if (msg.contains("ComponentInfo", ignoreCase = true) ||
+                    msg.contains("SuperNotCalledException", ignoreCase = true)) {
+                    defaultHandler?.uncaughtException(thread, throwable)
+                } else {
+                    runOnUiThread {
+                        try {
+                            Toast.makeText(applicationContext, "Stream recovered: $msg", Toast.LENGTH_SHORT).show()
+                            btnLive.isEnabled = true
+                            if (!isStreaming) {
+                                btnLive.text = getString(R.string.go_live)
+                            }
+                        } catch (e: Throwable) {
+                            Log.w(TAG, "UI toast error in uncaught handler", e)
+                        }
                     }
-                } catch (e: Throwable) {
-                    Log.w(TAG, "UI toast error in uncaught handler", e)
                 }
             }
-        }
 
-        streamConfig = StreamConfig(this)
+            streamConfig = StreamConfig(this)
 
-        initViews()
-        setupListeners()
-        registerUsbReceiver()
-        registerBatteryReceiver()
+            initViews()
+            setupListeners()
+            registerUsbReceiver()
+            registerBatteryReceiver()
 
-        if (allPermissionsGranted()) {
-            initStreamEngine()
-        } else {
-            ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSIONS_REQUEST_CODE)
+            if (allPermissionsGranted()) {
+                initStreamEngine()
+            } else {
+                ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSIONS_REQUEST_CODE)
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "Fatal error in onCreate", e)
+            Toast.makeText(this, "Startup warning: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
-            val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+        try {
+            if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+                val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                }
+                updateOtgAvailability(true)
+                device?.let { requestUsbPermissionIfNeeded(it) }
             }
-            updateOtgAvailability(true)
-            device?.let { requestUsbPermissionIfNeeded(it) }
+        } catch (e: Throwable) {
+            Log.e(TAG, "onNewIntent failed", e)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == PERMISSIONS_REQUEST_CODE) {
+            if (allPermissionsGranted()) {
+                initStreamEngine()
+            } else {
+                Toast.makeText(this, "Camera & Audio permissions are required for live streaming", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -473,6 +510,10 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     private fun selectRearCamera() {
+        if (!::camera2Source.isInitialized) {
+            Toast.makeText(this, "Camera initializing, please grant permissions", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (currentSource == ActiveSource.REAR && camera2Source.getCameraFacing() == CameraHelper.Facing.BACK) {
             return
         }
@@ -500,6 +541,10 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     private fun selectFrontCamera() {
+        if (!::camera2Source.isInitialized) {
+            Toast.makeText(this, "Camera initializing, please grant permissions", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (currentSource == ActiveSource.FRONT && camera2Source.getCameraFacing() == CameraHelper.Facing.FRONT) {
             return
         }
@@ -531,24 +576,24 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             return
         }
 
-        val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager
-        val uvcDevice = usbManager?.deviceList?.values?.firstOrNull { dev ->
-            dev.deviceClass == 14 || dev.deviceClass == 239 ||
-            (0 until dev.interfaceCount).any { i -> dev.getInterface(i).interfaceClass == 14 }
-        }
-
-        if (uvcDevice == null) {
-            Toast.makeText(this, "No USB Capture Card detected. Check OTG connection.", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        if (!usbManager.hasPermission(uvcDevice)) {
-            Toast.makeText(this, "Requesting USB permission for capture card...", Toast.LENGTH_SHORT).show()
-            requestUsbPermissionIfNeeded(uvcDevice)
-            return
-        }
-
         try {
+            val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager
+            val uvcDevice = usbManager?.deviceList?.values?.firstOrNull { dev ->
+                dev.deviceClass == 14 || dev.deviceClass == 239 ||
+                (0 until dev.interfaceCount).any { i -> dev.getInterface(i).interfaceClass == 14 }
+            }
+
+            if (uvcDevice == null) {
+                Toast.makeText(this, "No USB Capture Card detected. Check OTG connection.", Toast.LENGTH_LONG).show()
+                return
+            }
+
+            if (!usbManager.hasPermission(uvcDevice)) {
+                Toast.makeText(this, "Requesting USB permission for capture card...", Toast.LENGTH_SHORT).show()
+                requestUsbPermissionIfNeeded(uvcDevice)
+                return
+            }
+
             val otg = otgCameraSource ?: OtgCameraSource(this).also { otgCameraSource = it }
             genericStream?.changeVideoSource(otg)
             currentSource = ActiveSource.OTG
@@ -561,7 +606,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             updateStatsDisplay()
         } catch (e: Throwable) {
             Log.e(TAG, "OTG Camera switch failed", e)
-            Toast.makeText(this, "OTG Card error: ${e.localizedMessage ?: "Unknown error"}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "OTG Switch error: ${e.localizedMessage ?: "Unknown error"}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -618,15 +663,19 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     private fun checkUsbConnectedInitially() {
-        val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager
-        val deviceList = usbManager?.deviceList
-        val uvcDevice = deviceList?.values?.firstOrNull { dev ->
-            dev.deviceClass == 14 || dev.deviceClass == 239 || (0 until dev.interfaceCount).any { i -> dev.getInterface(i).interfaceClass == 14 }
-        }
-        val hasUvc = uvcDevice != null
-        updateOtgAvailability(hasUvc)
-        if (uvcDevice != null) {
-            requestUsbPermissionIfNeeded(uvcDevice)
+        try {
+            val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager
+            val deviceList = usbManager?.deviceList
+            val uvcDevice = deviceList?.values?.firstOrNull { dev ->
+                dev.deviceClass == 14 || dev.deviceClass == 239 || (0 until dev.interfaceCount).any { i -> dev.getInterface(i).interfaceClass == 14 }
+            }
+            val hasUvc = uvcDevice != null
+            updateOtgAvailability(hasUvc)
+            if (uvcDevice != null) {
+                requestUsbPermissionIfNeeded(uvcDevice)
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "checkUsbConnectedInitially failed", e)
         }
     }
 
@@ -707,21 +756,41 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     private fun registerUsbReceiver() {
-        val filter = IntentFilter().apply {
-            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
-            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
-            addAction(ACTION_USB_PERMISSION)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(usbReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(usbReceiver, filter)
+        try {
+            val filter = IntentFilter().apply {
+                addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+                addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+                addAction(ACTION_USB_PERMISSION)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                try {
+                    registerReceiver(usbReceiver, filter, Context.RECEIVER_EXPORTED)
+                } catch (se: SecurityException) {
+                    registerReceiver(usbReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                }
+            } else {
+                registerReceiver(usbReceiver, filter)
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "registerUsbReceiver failed", e)
         }
     }
 
     private fun registerBatteryReceiver() {
-        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        registerReceiver(batteryReceiver, filter)
+        try {
+            val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                try {
+                    registerReceiver(batteryReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                } catch (se: SecurityException) {
+                    registerReceiver(batteryReceiver, filter)
+                }
+            } else {
+                registerReceiver(batteryReceiver, filter)
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "registerBatteryReceiver failed", e)
+        }
     }
 
     // --- ConnectChecker Callbacks ---

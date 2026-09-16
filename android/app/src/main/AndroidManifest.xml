@@ -19,7 +19,6 @@
         android:roundIcon="@drawable/ic_usb_card"
         android:supportsRtl="true"
         android:theme="@style/Theme.MobileCaptureStreamer"
-        android:keepScreenOn="true"
         tools:targetApi="34">
 
         <activity
