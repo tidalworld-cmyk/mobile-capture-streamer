@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.SurfaceTexture
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Bundle
@@ -14,7 +15,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.LayoutInflater
-import android.view.SurfaceView
+import android.view.TextureView
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
@@ -36,7 +37,7 @@ import com.pedro.library.generic.GenericStream
 
 class MainActivity : AppCompatActivity(), ConnectChecker {
 
-    private lateinit var surfaceView: SurfaceView
+    private lateinit var textureView: TextureView
     private lateinit var tvLiveBadge: TextView
     private lateinit var tvUptime: TextView
     private lateinit var tvStreamStats: TextView
@@ -132,7 +133,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     }
 
     private fun initViews() {
-        surfaceView = findViewById(R.id.surfaceView)
+        textureView = findViewById(R.id.textureView)
         tvLiveBadge = findViewById(R.id.tvLiveBadge)
         tvUptime = findViewById(R.id.tvUptime)
         tvStreamStats = findViewById(R.id.tvStreamStats)
@@ -209,9 +210,45 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 }
             }
 
-            // Start preview with autoHandle = true so it attaches when Surface is ready
-            if (!stream.isOnPreview) {
-                stream.startPreview(surfaceView, true)
+            // If TextureView surface is already available, start preview directly
+            if (textureView.isAvailable) {
+                if (!stream.isOnPreview) {
+                    stream.startPreview(textureView)
+                }
+            } else {
+                // Otherwise attach listener to start as soon as TextureView surface is ready
+                textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                    override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+                        try {
+                            if (genericStream?.isOnPreview == false) {
+                                genericStream?.startPreview(textureView)
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "onSurfaceTextureAvailable startPreview failed", e)
+                        }
+                    }
+
+                    override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
+                        try {
+                            genericStream?.getGlInterface()?.setPreviewResolution(width, height)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "setPreviewResolution failed", e)
+                        }
+                    }
+
+                    override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+                        try {
+                            if (genericStream?.isOnPreview == true) {
+                                genericStream?.stopPreview()
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "onSurfaceTextureDestroyed failed", e)
+                        }
+                        return true
+                    }
+
+                    override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
+                }
             }
             updateStatsDisplay()
         } catch (e: Exception) {
@@ -253,7 +290,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                     true,
                     StreamConfig.DEFAULT_AUDIO_BITRATE
                 )
-                stream.startPreview(surfaceView, true)
+                if (textureView.isAvailable) {
+                    stream.startPreview(textureView)
+                }
             }
 
             stream.startStream(endpoint)
@@ -343,8 +382,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
         try {
             streamConfig.isPortraitShorts = !streamConfig.isPortraitShorts
-            if (genericStream?.isOnPreview == true) {
-                genericStream?.stopPreview()
+            val stream = genericStream ?: return
+            if (stream.isOnPreview) {
+                stream.stopPreview()
             }
             prepareAndStartPreview()
             val mode = if (streamConfig.isPortraitShorts) "9:16 Shorts (Vertical)" else "16:9 Landscape"
@@ -505,7 +545,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     override fun onResume() {
         super.onResume()
         if (allPermissionsGranted() && genericStream != null && !genericStream!!.isOnPreview && !isStreaming) {
-            prepareAndStartPreview()
+            if (textureView.isAvailable) {
+                try {
+                    genericStream?.startPreview(textureView)
+                } catch (e: Exception) {
+                    Log.e(TAG, "onResume startPreview failed", e)
+                }
+            }
         }
     }
 

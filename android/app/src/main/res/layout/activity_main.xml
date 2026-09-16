@@ -8,8 +8,8 @@
     android:background="@color/black">
 
     <!-- Live Program Video Preview -->
-    <SurfaceView
-        android:id="@+id/surfaceView"
+    <TextureView
+        android:id="@+id/textureView"
         android:layout_width="0dp"
         android:layout_height="0dp"
         app:layout_constraintTop_toTopOf="parent"
