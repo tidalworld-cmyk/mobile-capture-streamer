@@ -21,21 +21,11 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
     @Volatile
     private var selectedDeviceName: String? = null
 
-    private var targetWidth = 1280
-    private var targetHeight = 720
-    private var targetFps = 30
-
     companion object {
         private const val TAG = "OtgCameraSource"
     }
 
-    override fun create(width: Int, height: Int, fps: Int, rotation: Int): Boolean {
-        // USB HDMI Capture cards natively output 16:9 horizontal video (1280x720 or 1920x1080)
-        targetWidth = if (width > height) width else height
-        targetHeight = if (width > height) height else width
-        targetFps = fps
-        return true
-    }
+    override fun create(width: Int, height: Int, fps: Int, rotation: Int): Boolean = true
 
     override fun start(surfaceTexture: SurfaceTexture) {
         this.surfaceTexture = surfaceTexture
@@ -156,24 +146,6 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
             Log.d(TAG, "UVC onCameraOpen: ${device.deviceName}")
             isCameraOpen = true
             try {
-                // Configure clean preview size matching HDMI capture card capabilities
-                val supportedSizes = cameraHelper?.supportedSizes
-                Log.d(TAG, "Supported UVC sizes: $supportedSizes")
-
-                val optimalSize = supportedSizes?.firstOrNull { it.width == targetWidth && it.height == targetHeight }
-                    ?: supportedSizes?.firstOrNull { it.width == 1280 && it.height == 720 }
-                    ?: supportedSizes?.firstOrNull { it.width == 1920 && it.height == 1080 }
-                    ?: supportedSizes?.firstOrNull {
-                        val ratio = it.width.toFloat() / it.height.toFloat()
-                        ratio in 1.7f..1.8f
-                    }
-                    ?: supportedSizes?.firstOrNull()
-
-                if (optimalSize != null) {
-                    Log.d(TAG, "Configuring UVC preview size: ${optimalSize.width}x${optimalSize.height}")
-                    cameraHelper?.setPreviewSize(optimalSize.width, optimalSize.height)
-                }
-
                 surface?.let {
                     if (it.isValid) {
                         cameraHelper?.addSurface(it, false)
@@ -185,8 +157,6 @@ class OtgCameraSource(private val context: Context) : VideoSource() {
             } catch (e: Exception) {
                 Log.e(TAG, "startPreview or addSurface failed", e)
             }
-        }
-
         override fun onCameraClose(device: UsbDevice) {
             Log.d(TAG, "UVC onCameraClose: ${device.deviceName}")
             isCameraOpen = false
