@@ -1,4 +1,4 @@
-﻿<resources>
+<resources>
     <style name="Theme.MobileCaptureStreamer" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="colorPrimary">@color/accent_blue</item>
         <item name="colorPrimaryVariant">@color/accent_blue</item>

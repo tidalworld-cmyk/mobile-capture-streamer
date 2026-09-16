@@ -1,4 +1,4 @@
-﻿package com.streamezy.capture
+package com.streamezy.capture
 
 import android.content.Context
 import android.content.SharedPreferences
