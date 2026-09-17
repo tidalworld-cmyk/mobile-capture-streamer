@@ -19,18 +19,26 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.TextureView
+import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
+import androidx.cardview.widget.CardView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import com.pedro.common.ConnectChecker
 import com.pedro.encoder.input.sources.audio.MicrophoneSource
 import com.pedro.encoder.input.sources.video.Camera2Source
@@ -47,7 +55,25 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private lateinit var tvStreamStats: TextView
     private lateinit var tvBatteryStatus: TextView
     private lateinit var layoutRotateHint: LinearLayout
+    private lateinit var btnAudioControl: ImageButton
     private lateinit var btnSettings: ImageButton
+    private lateinit var layoutAudioPanel: CardView
+    private lateinit var btnAudioClose: ImageButton
+    private lateinit var switchMuteLive: SwitchCompat
+    private lateinit var tvMuteHint: TextView
+    private lateinit var tvMicVolumeLabel: TextView
+    private lateinit var seekMicVolume: SeekBar
+    private lateinit var tvNoiseReductionValue: TextView
+    private lateinit var seekNoiseReduction: SeekBar
+    private lateinit var btnSelectAudio: Button
+    private lateinit var tvSelectedAudioName: TextView
+    private lateinit var btnPlayAudio: Button
+    private lateinit var btnPauseAudio: Button
+    private lateinit var btnStopAudio: Button
+    private lateinit var tvBgVolumeLabel: TextView
+    private lateinit var seekBgVolume: SeekBar
+    private lateinit var cbLoopAudio: CheckBox
+
     private lateinit var tileRearCam: LinearLayout
     private lateinit var tileFrontCam: LinearLayout
     private lateinit var tileOtgCam: LinearLayout
@@ -56,6 +82,28 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private lateinit var tvOtgLabel: TextView
     private lateinit var ivOtgIcon: ImageView
     private lateinit var btnLive: Button
+
+    private val audioProcessor = AudioProcessor()
+
+    private val audioPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            val fileName = AudioDecoder.getFileName(this, uri)
+            tvSelectedAudioName.text = "Decoding: $fileName..."
+            lifecycleScope.launch {
+                try {
+                    val pcmData = AudioDecoder.decodeToPcm(this@MainActivity, uri)
+                    audioProcessor.setBackgroundAudio(pcmData)
+                    val seconds = pcmData.size / 44100
+                    tvSelectedAudioName.text = "🎵 $fileName (${seconds / 60}m ${seconds % 60}s)"
+                    Toast.makeText(this@MainActivity, "Audio loaded & ready to stream!", Toast.LENGTH_SHORT).show()
+                } catch (e: Throwable) {
+                    Log.e(TAG, "Audio loading failed", e)
+                    tvSelectedAudioName.text = "Failed: ${e.localizedMessage ?: "Unknown error"}"
+                    Toast.makeText(this@MainActivity, "Audio decode error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
 
     private lateinit var streamConfig: StreamConfig
     private var genericStream: GenericStream? = null
@@ -247,7 +295,25 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         tvStreamStats = findViewById(R.id.tvStreamStats)
         tvBatteryStatus = findViewById(R.id.tvBatteryStatus)
         layoutRotateHint = findViewById(R.id.layoutRotateHint)
+        btnAudioControl = findViewById(R.id.btnAudioControl)
         btnSettings = findViewById(R.id.btnSettings)
+        layoutAudioPanel = findViewById(R.id.layoutAudioPanel)
+        btnAudioClose = findViewById(R.id.btnAudioClose)
+        switchMuteLive = findViewById(R.id.switchMuteLive)
+        tvMuteHint = findViewById(R.id.tvMuteHint)
+        tvMicVolumeLabel = findViewById(R.id.tvMicVolumeLabel)
+        seekMicVolume = findViewById(R.id.seekMicVolume)
+        tvNoiseReductionValue = findViewById(R.id.tvNoiseReductionValue)
+        seekNoiseReduction = findViewById(R.id.seekNoiseReduction)
+        btnSelectAudio = findViewById(R.id.btnSelectAudio)
+        tvSelectedAudioName = findViewById(R.id.tvSelectedAudioName)
+        btnPlayAudio = findViewById(R.id.btnPlayAudio)
+        btnPauseAudio = findViewById(R.id.btnPauseAudio)
+        btnStopAudio = findViewById(R.id.btnStopAudio)
+        tvBgVolumeLabel = findViewById(R.id.tvBgVolumeLabel)
+        seekBgVolume = findViewById(R.id.seekBgVolume)
+        cbLoopAudio = findViewById(R.id.cbLoopAudio)
+
         tileRearCam = findViewById(R.id.tileRearCam)
         tileFrontCam = findViewById(R.id.tileFrontCam)
         tileOtgCam = findViewById(R.id.tileOtgCam)
@@ -276,11 +342,101 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             }
         }
 
+        btnAudioControl.setOnClickListener {
+            toggleAudioPanel()
+        }
+
+        btnAudioClose.setOnClickListener {
+            layoutAudioPanel.visibility = View.GONE
+        }
+
+        switchMuteLive.setOnCheckedChangeListener { _, isChecked ->
+            audioProcessor.isLiveMuted = isChecked
+            if (isChecked) {
+                tvMuteHint.text = "Live mic MUTED — custom background audio plays cleanly"
+                tvMuteHint.setTextColor(ContextCompat.getColor(this, R.color.accent_red))
+                Toast.makeText(this, "Live mic muted: background audio plays cleanly", Toast.LENGTH_SHORT).show()
+            } else {
+                tvMuteHint.text = "Mic active (mixed with background audio)"
+                tvMuteHint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+                Toast.makeText(this, "Live mic active", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        seekMicVolume.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                audioProcessor.micVolume = progress / 100f
+                tvMicVolumeLabel.text = "Mic Gain: $progress%"
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        seekNoiseReduction.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                audioProcessor.noiseReductionPercent = progress
+                tvNoiseReductionValue.text = "$progress%"
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        btnSelectAudio.setOnClickListener {
+            try {
+                audioPickerLauncher.launch("audio/*")
+            } catch (e: Exception) {
+                Toast.makeText(this, "Cannot open audio picker: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        btnPlayAudio.setOnClickListener {
+            if (!audioProcessor.hasBackgroundAudio()) {
+                Toast.makeText(this, "Please select an audio file first", Toast.LENGTH_SHORT).show()
+                audioPickerLauncher.launch("audio/*")
+            } else {
+                audioProcessor.playBackground()
+                Toast.makeText(this, "Background audio playing into stream", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        btnPauseAudio.setOnClickListener {
+            audioProcessor.pauseBackground()
+            Toast.makeText(this, "Background audio paused", Toast.LENGTH_SHORT).show()
+        }
+
+        btnStopAudio.setOnClickListener {
+            audioProcessor.stopBackground()
+            Toast.makeText(this, "Background audio stopped", Toast.LENGTH_SHORT).show()
+        }
+
+        seekBgVolume.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                audioProcessor.bgVolume = progress / 100f
+                tvBgVolumeLabel.text = "Music Volume: $progress%"
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        cbLoopAudio.setOnCheckedChangeListener { _, isChecked ->
+            audioProcessor.isLooping = isChecked
+        }
+
         tileRearCam.setOnClickListener { selectRearCamera() }
         tileFrontCam.setOnClickListener { selectFrontCamera() }
         tileOtgCam.setOnClickListener { selectOtgCamera() }
 
         btnSettings.setOnClickListener { showSettingsDialog() }
+    }
+
+    private fun toggleAudioPanel() {
+        if (::layoutAudioPanel.isInitialized) {
+            layoutAudioPanel.visibility = if (layoutAudioPanel.visibility == View.VISIBLE) {
+                View.GONE
+            } else {
+                View.VISIBLE
+            }
+        }
     }
 
     private fun allPermissionsGranted(): Boolean {
@@ -293,6 +449,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         try {
             camera2Source = Camera2Source(this)
             microphoneSource = MicrophoneSource()
+            microphoneSource.setAudioEffect(audioProcessor)
             genericStream = GenericStream(this, this, camera2Source, microphoneSource)
             genericStream?.getGlInterface()?.autoHandleOrientation = true
 
