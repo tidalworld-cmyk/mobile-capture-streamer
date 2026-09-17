@@ -102,6 +102,17 @@
                 android:fontFamily="monospace"
                 android:visibility="gone" />
 
+            <!-- Multi-Network Center Button -->
+            <ImageButton
+                android:id="@+id/btnNetworkCenter"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginEnd="8dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="BondStream Network Center"
+                android:src="@drawable/ic_network_cell"
+                app:tint="@color/white" />
+
             <!-- Audio Advanced Controls Button -->
             <ImageButton
                 android:id="@+id/btnAudioControl"
@@ -163,6 +174,9 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:background="#990F172A"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground"
             android:paddingHorizontal="8dp"
             android:paddingVertical="4dp"
             android:orientation="vertical"

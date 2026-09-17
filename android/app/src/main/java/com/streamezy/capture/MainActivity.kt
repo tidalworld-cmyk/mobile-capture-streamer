@@ -184,6 +184,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private lateinit var tvBondingBadge: TextView
     private lateinit var tvBondingNetworks: TextView
     private lateinit var tvBondingMetrics: TextView
+    private lateinit var btnNetworkCenter: ImageButton
 
     private enum class ActiveSource { REAR, FRONT, OTG }
     private var currentSource = ActiveSource.REAR
@@ -433,6 +434,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         tvBondingBadge = findViewById(R.id.tvBondingBadge)
         tvBondingNetworks = findViewById(R.id.tvBondingNetworks)
         tvBondingMetrics = findViewById(R.id.tvBondingMetrics)
+        btnNetworkCenter = findViewById(R.id.btnNetworkCenter)
 
         updateOrientationHint(resources.configuration.orientation)
         updateHeaderOrientation(resources.configuration.orientation)
@@ -455,6 +457,14 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             } else {
                 startLiveStream()
             }
+        }
+
+        btnNetworkCenter.setOnClickListener {
+            showNetworkCenterDialog()
+        }
+
+        headerRowBonding.setOnClickListener {
+            showNetworkCenterDialog()
         }
 
         btnAudioControl.setOnClickListener {
@@ -1603,6 +1613,136 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             updateNetworkStatusPreview()
             Toast.makeText(this, "Settings saved (Aspect: $tempRatio)", Toast.LENGTH_SHORT).show()
             dialog.dismiss()
+        }
+
+        dialog.show()
+    }
+
+    private fun showNetworkCenterDialog() {
+        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_network_center, null)
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        val btnClose = dialogView.findViewById<ImageButton>(R.id.btnCloseNetworkCenter)
+        val tvCenterBadge = dialogView.findViewById<TextView>(R.id.tvCenterBadge)
+        val tvCenterSummary = dialogView.findViewById<TextView>(R.id.tvCenterSummary)
+        val tvCenterBandwidth = dialogView.findViewById<TextView>(R.id.tvCenterBandwidth)
+        val tvCenterSentLoss = dialogView.findViewById<TextView>(R.id.tvCenterSentLoss)
+        val layoutNetworkCards = dialogView.findViewById<LinearLayout>(R.id.layoutNetworkCards)
+        val btnBenchmark = dialogView.findViewById<Button>(R.id.btnCenterBenchmark)
+        val tvBenchmarkResults = dialogView.findViewById<TextView>(R.id.tvCenterBenchmarkResults)
+        val tvCenterNotice = dialogView.findViewById<TextView>(R.id.tvCenterNotice)
+
+        btnClose.setOnClickListener { dialog.dismiss() }
+
+        fun populateCards() {
+            layoutNetworkCards.removeAllViews()
+            val netMgr = com.streamezy.capture.bonding.AndroidNetworkManager(this)
+            netMgr.refreshCurrentNetworks()
+
+            val paths = if (bondSession != null) {
+                bondSession!!.networkManager.paths.values.toList()
+            } else {
+                netMgr.paths.values.toList()
+            }
+
+            val onlinePaths = paths.filter { it.status == com.streamezy.capture.bonding.PathStatus.ONLINE }
+            val onlineCount = onlinePaths.size
+            val isBonded = onlineCount >= 2
+
+            if (isBonded) {
+                tvCenterBadge.text = "BONDED ($onlineCount)"
+                tvCenterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
+            } else if (onlineCount > 0) {
+                tvCenterBadge.text = "SINGLE PATH (1)"
+                tvCenterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_blue))
+            } else {
+                tvCenterBadge.text = "OFFLINE"
+                tvCenterBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.text_secondary))
+            }
+
+            val onlineNames = onlinePaths.joinToString(" ") { "${it.name} ●" }
+            tvCenterSummary.text = if (onlineNames.isNotBlank()) "$onlineCount Connected: $onlineNames" else "No Networks Connected"
+
+            val totalAvail = onlinePaths.sumOf { it.availableBandwidthMbps }
+            val totalUsage = paths.sumOf { it.currentUsageMbps }
+            val totalSentMb = paths.sumOf { it.bytesSent } / (1024.0 * 1024.0)
+            val avgLatency = if (onlineCount > 0) onlinePaths.map { it.latencyMs }.average().toLong() else 0L
+            val lossPct = if (onlineCount > 0) onlinePaths.map { it.lossRate }.average() else 0.0
+
+            tvCenterBandwidth.text = String.format("Total Avail: %.1f Mbps | Usage: %.1f Mbps", totalAvail, totalUsage)
+            tvCenterSentLoss.text = String.format("Sent: %.1f MB | %dms RTT | %.1f%% loss", totalSentMb, avgLatency, lossPct)
+
+            for (p in paths) {
+                val cardView = LayoutInflater.from(this).inflate(R.layout.item_network_card, layoutNetworkCards, false)
+                val tvName = cardView.findViewById<TextView>(R.id.tvCardName)
+                val tvStatus = cardView.findViewById<TextView>(R.id.tvCardStatus)
+                val tvAvail = cardView.findViewById<TextView>(R.id.tvCardAvailable)
+                val tvUsage = cardView.findViewById<TextView>(R.id.tvCardUsage)
+                val tvSent = cardView.findViewById<TextView>(R.id.tvCardSent)
+                val tvLatencyLoss = cardView.findViewById<TextView>(R.id.tvCardLatencyLoss)
+
+                tvName.text = "${p.name} [${p.transportType}]"
+                tvStatus.text = p.status.name
+                val statusColor = when (p.status) {
+                    com.streamezy.capture.bonding.PathStatus.ONLINE -> R.color.accent_green
+                    com.streamezy.capture.bonding.PathStatus.CONNECTING,
+                    com.streamezy.capture.bonding.PathStatus.RECOVERING -> R.color.accent_blue
+                    com.streamezy.capture.bonding.PathStatus.FAILING -> R.color.accent_orange
+                    else -> R.color.text_secondary
+                }
+                tvStatus.setBackgroundColor(ContextCompat.getColor(this, statusColor))
+
+                tvAvail.text = String.format("Avail: %.1f Mbps", p.availableBandwidthMbps)
+                tvUsage.text = String.format("Usage: %.1f Mbps", p.currentUsageMbps)
+                val sentMb = p.bytesSent / (1024.0 * 1024.0)
+                tvSent.text = String.format("Sent: %.1f MB (%d pkts)", sentMb, p.packetsSent)
+                tvLatencyLoss.text = String.format("%dms RTT | %.1f%% loss", p.latencyMs, p.lossRate)
+
+                layoutNetworkCards.addView(cardView)
+            }
+
+            val notice = netMgr.getDualSimSupportNotice()
+            if (notice != null) {
+                tvCenterNotice.visibility = View.VISIBLE
+                tvCenterNotice.text = notice
+            } else {
+                tvCenterNotice.visibility = View.GONE
+            }
+        }
+
+        populateCards()
+
+        btnBenchmark.setOnClickListener {
+            btnBenchmark.isEnabled = false
+            btnBenchmark.text = "Testing Multi-Path..."
+            tvBenchmarkResults.visibility = View.VISIBLE
+            tvBenchmarkResults.text = "Probing multi-path connectivity..."
+
+            val host = streamConfig.bondingServerHost.trim().ifEmpty { "192.168.29.184" }
+            val port = streamConfig.bondingServerPort
+            val token = streamConfig.bondingAuthToken.ifBlank { streamConfig.streamKey }
+
+            val testSession = com.streamezy.capture.bonding.BondSession(this, host, port, token)
+            testSession.runBenchmarkTest(
+                durationSeconds = 4,
+                onProgress = { progress ->
+                    runOnUiThread { tvBenchmarkResults.text = progress }
+                },
+                onComplete = { success, summary ->
+                    runOnUiThread {
+                        btnBenchmark.isEnabled = true
+                        btnBenchmark.text = "Run Multi-Path Benchmark Test"
+                        tvBenchmarkResults.text = summary
+                        tvBenchmarkResults.setTextColor(
+                            ContextCompat.getColor(this, if (success) R.color.accent_green else R.color.accent_red)
+                        )
+                        populateCards()
+                    }
+                }
+            )
         }
 
         dialog.show()
