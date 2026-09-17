@@ -24,7 +24,10 @@ data class NetworkPath(
     var packetsSent: Long = 0L,
     var bytesSent: Long = 0L,
     var packetsAcked: Long = 0L,
-    var packetsLost: Long = 0L
+    var packetsLost: Long = 0L,
+    var availableBandwidthMbps: Double = 0.0,
+    var currentUsageMbps: Double = 0.0,
+    var lastBytesSent: Long = 0L
 ) {
     val isUsable: Boolean
         get() = status == PathStatus.ONLINE && network != null

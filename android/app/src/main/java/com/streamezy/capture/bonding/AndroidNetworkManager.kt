@@ -95,7 +95,10 @@ class AndroidNetworkManager(private val context: Context) {
         val path = paths[PATH_ID_WIFI] ?: return
         path.network = network
         path.status = PathStatus.ONLINE
-        Log.i(TAG, "Wi-Fi path connected ($network)")
+        val caps = connectivityManager.getNetworkCapabilities(network)
+        val upstream = if (caps != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) caps.linkUpstreamBandwidthKbps else 0
+        path.availableBandwidthMbps = if (upstream > 0) upstream / 1000.0 else 30.0
+        Log.i(TAG, "Wi-Fi path connected ($network) - Avail: ${path.availableBandwidthMbps} Mbps")
         notifyPathsChanged()
     }
 
@@ -103,16 +106,21 @@ class AndroidNetworkManager(private val context: Context) {
         // Check if SIM 1 already has this network
         val p1 = paths[PATH_ID_CELLULAR_1]
         val p2 = paths[PATH_ID_CELLULAR_2]
+        val caps = connectivityManager.getNetworkCapabilities(network)
+        val upstream = if (caps != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) caps.linkUpstreamBandwidthKbps else 0
+        val mbps = if (upstream > 0) upstream / 1000.0 else 15.0
 
         if (p1?.network == null) {
             p1?.network = network
             p1?.status = PathStatus.ONLINE
-            Log.i(TAG, "Assigned cellular network to SIM 1 ($network)")
+            p1?.availableBandwidthMbps = mbps
+            Log.i(TAG, "Assigned cellular network to SIM 1 ($network) - Avail: $mbps Mbps")
         } else if (p1.network != network && p2?.network == null) {
             // Independent secondary cellular network detected (DSDA or dual-active)
             p2?.network = network
             p2?.status = PathStatus.ONLINE
-            Log.i(TAG, "Assigned secondary cellular network to SIM 2 ($network)")
+            p2?.availableBandwidthMbps = mbps
+            Log.i(TAG, "Assigned secondary cellular network to SIM 2 ($network) - Avail: $mbps Mbps")
         }
         notifyPathsChanged()
     }
@@ -125,14 +133,23 @@ class AndroidNetworkManager(private val context: Context) {
         }
         eth.network = network
         eth.status = PathStatus.ONLINE
+        val caps = connectivityManager.getNetworkCapabilities(network)
+        val upstream = if (caps != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) caps.linkUpstreamBandwidthKbps else 0
+        eth.availableBandwidthMbps = if (upstream > 0) upstream / 1000.0 else 100.0
         Log.i(TAG, "Ethernet/USB path connected ($network)")
         notifyPathsChanged()
     }
 
     private fun handleCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
         val hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val upstreamKbps = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) caps.linkUpstreamBandwidthKbps else 0
         for (path in paths.values) {
             if (path.network == network) {
+                if (upstreamKbps > 0) {
+                    path.availableBandwidthMbps = upstreamKbps / 1000.0
+                } else if (path.availableBandwidthMbps <= 0.0) {
+                    path.availableBandwidthMbps = if (path.transportType == "WIFI") 30.0 else 15.0
+                }
                 if (!hasInternet && path.status == PathStatus.ONLINE) {
                     path.status = PathStatus.FAILING
                 } else if (hasInternet && path.status == PathStatus.FAILING) {

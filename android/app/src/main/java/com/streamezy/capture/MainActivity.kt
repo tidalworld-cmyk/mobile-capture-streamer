@@ -439,6 +439,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         checkUsbConnectedInitially()
         checkUsbAudioState()
         updateAudioStatusPanelUI()
+        updateNetworkStatusPreview()
     }
 
     private fun setupListeners() {
@@ -1224,23 +1225,58 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
         headerRowBonding.visibility = View.VISIBLE
 
+        val onlinePaths = metrics.paths.filter { it.status == com.streamezy.capture.bonding.PathStatus.ONLINE }
+        val count = onlinePaths.size
+
         if (metrics.isBonded) {
             tvBondingBadge.text = "BONDED"
             tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
-        } else if (metrics.activePathCount > 0) {
-            tvBondingBadge.text = "1 PATH"
+        } else if (count > 0) {
+            tvBondingBadge.text = "1 NET"
             tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_blue))
         } else {
             tvBondingBadge.text = "OFFLINE"
             tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.text_secondary))
         }
 
-        val netSummary = metrics.paths.filter { it.status == com.streamezy.capture.bonding.PathStatus.ONLINE }
-            .joinToString(" ") { "${it.name} ●" }
-        tvBondingNetworks.text = if (netSummary.isNotBlank()) netSummary else "Searching Paths..."
+        val netSummary = onlinePaths.joinToString(" ") { "${it.name} ●" }
+        tvBondingNetworks.text = if (netSummary.isNotBlank()) "$count Connected: $netSummary" else "0 Connected"
 
-        tvBondingMetrics.text = String.format("↑ %.1f Mbps | %dms | %.1f%% loss",
-            metrics.combinedUploadMbps, metrics.averageLatencyMs, metrics.packetLossPct)
+        val sentMb = metrics.totalBytesSent / (1024.0 * 1024.0)
+        tvBondingMetrics.text = String.format("Avail: %.1f Mbps | Usage: %.1f Mbps | Sent: %.1f MB | %dms",
+            metrics.totalAvailableBandwidthMbps, metrics.totalUsageMbps, sentMb, metrics.averageLatencyMs)
+    }
+
+    private fun updateNetworkStatusPreview() {
+        if (!::headerRowBonding.isInitialized) return
+        if (!streamConfig.isBondingEnabled) {
+            headerRowBonding.visibility = View.GONE
+            return
+        }
+        if (isStreaming) return
+        headerRowBonding.visibility = View.VISIBLE
+        try {
+            val netMgr = com.streamezy.capture.bonding.AndroidNetworkManager(this)
+            netMgr.refreshCurrentNetworks()
+            val usable = netMgr.getUsablePaths()
+            val count = usable.size
+            if (count >= 2) {
+                tvBondingBadge.text = "BONDED"
+                tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
+            } else if (count == 1) {
+                tvBondingBadge.text = "1 NET"
+                tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_blue))
+            } else {
+                tvBondingBadge.text = "OFFLINE"
+                tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.text_secondary))
+            }
+            val netList = usable.joinToString(" ") { "${it.name} ●" }
+            tvBondingNetworks.text = if (netList.isNotBlank()) "$count Connected: $netList" else "0 Connected"
+            val totalAvail = usable.sumOf { it.availableBandwidthMbps }
+            tvBondingMetrics.text = String.format("Avail: %.1f Mbps | Usage: 0.0 Mbps (Standby)", totalAvail)
+        } catch (e: Exception) {
+            Log.w(TAG, "updateNetworkStatusPreview failed", e)
+        }
     }
 
     private fun stopLiveStream() {
@@ -1257,9 +1293,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         } catch (e: Exception) {
             Log.w(TAG, "Bonding shutdown error", e)
         }
-        if (::headerRowBonding.isInitialized) {
-            headerRowBonding.visibility = View.GONE
-        }
+        updateNetworkStatusPreview()
         onDisconnect()
     }
 
@@ -1536,8 +1570,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             if (paths.isEmpty()) {
                 tvBondingPathStatus.text = "No active network paths found"
             } else {
-                val pathSummary = paths.joinToString(", ") { "${it.name} (${it.status})" }
-                tvBondingPathStatus.text = "Detected paths: $pathSummary"
+                val totalAvail = paths.sumOf { it.availableBandwidthMbps }
+                val pathSummary = paths.joinToString(", ") { "${it.name} (${String.format("%.1f", it.availableBandwidthMbps)}M)" }
+                tvBondingPathStatus.text = "${paths.size} Networks Connected: $pathSummary\nTotal Available: ${String.format("%.1f", totalAvail)} Mbps"
             }
         } catch (e: Exception) {
             tvBondingPathStatus.text = "Path detection ready"
@@ -1565,6 +1600,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 }
             }
             updateStatsDisplay()
+            updateNetworkStatusPreview()
             Toast.makeText(this, "Settings saved (Aspect: $tempRatio)", Toast.LENGTH_SHORT).show()
             dialog.dismiss()
         }

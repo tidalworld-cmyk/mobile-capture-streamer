@@ -17,6 +17,9 @@ data class BondMetrics(
     val isBonded: Boolean,
     val activePathCount: Int,
     val combinedUploadMbps: Double,
+    val totalAvailableBandwidthMbps: Double,
+    val totalUsageMbps: Double,
+    val totalBytesSent: Long,
     val averageLatencyMs: Long,
     val packetLossPct: Double,
     val paths: List<NetworkPath>
@@ -49,7 +52,7 @@ class BondSession(
         get() = pathClients.values.count { it.path.status == PathStatus.ONLINE }
 
     val combinedUploadMbps: Double
-        get() = pathClients.values.sumOf { it.path.estimatedUploadMbps }
+        get() = pathClients.values.sumOf { it.path.currentUsageMbps }
 
     val averageLatencyMs: Long
         get() {
@@ -77,11 +80,31 @@ class BondSession(
                     Thread.sleep(1000)
                     if (!isRunning.get()) break
                     val paths = pathClients.values.map { it.path }
+                    var currentTotalUsage = 0.0
+                    var currentTotalAvailable = 0.0
+                    var currentTotalSent = 0L
+
+                    for (p in paths) {
+                        currentTotalSent += p.bytesSent
+                        if (p.status == PathStatus.ONLINE) {
+                            val bytesDelta = (p.bytesSent - p.lastBytesSent).coerceAtLeast(0L)
+                            p.currentUsageMbps = (bytesDelta * 8.0) / 1_000_000.0
+                            p.lastBytesSent = p.bytesSent
+                            currentTotalUsage += p.currentUsageMbps
+                            currentTotalAvailable += p.availableBandwidthMbps
+                        } else {
+                            p.currentUsageMbps = 0.0
+                        }
+                    }
+
                     val loss = if (paths.isNotEmpty()) paths.map { it.lossRate }.average() else 0.0
                     val metrics = BondMetrics(
                         isBonded = isBonded,
                         activePathCount = activePathCount,
-                        combinedUploadMbps = combinedUploadMbps,
+                        combinedUploadMbps = currentTotalUsage,
+                        totalAvailableBandwidthMbps = currentTotalAvailable,
+                        totalUsageMbps = currentTotalUsage,
+                        totalBytesSent = currentTotalSent,
                         averageLatencyMs = averageLatencyMs,
                         packetLossPct = loss,
                         paths = paths
