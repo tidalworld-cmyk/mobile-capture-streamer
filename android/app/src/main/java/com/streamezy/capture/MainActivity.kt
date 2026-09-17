@@ -177,6 +177,14 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private lateinit var microphoneSource: MicrophoneSource
     private var otgCameraSource: OtgCameraSource? = null
 
+    // BondStream Multi-Network Bonding
+    private var bondSession: com.streamezy.capture.bonding.BondSession? = null
+    private var bondRtmpProxy: com.streamezy.capture.bonding.BondRtmpProxy? = null
+    private lateinit var headerRowBonding: LinearLayout
+    private lateinit var tvBondingBadge: TextView
+    private lateinit var tvBondingNetworks: TextView
+    private lateinit var tvBondingMetrics: TextView
+
     private enum class ActiveSource { REAR, FRONT, OTG }
     private var currentSource = ActiveSource.REAR
 
@@ -419,6 +427,12 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         btnCloseAudioStatusPanel = findViewById(R.id.btnCloseAudioStatusPanel)
         btnShowAudioStatusPanel = findViewById(R.id.btnShowAudioStatusPanel)
         btnDeleteAudio = findViewById(R.id.btnDeleteAudio)
+
+        // BondStream Live Status Views
+        headerRowBonding = findViewById(R.id.headerRowBonding)
+        tvBondingBadge = findViewById(R.id.tvBondingBadge)
+        tvBondingNetworks = findViewById(R.id.tvBondingNetworks)
+        tvBondingMetrics = findViewById(R.id.tvBondingMetrics)
 
         updateOrientationHint(resources.configuration.orientation)
         updateHeaderOrientation(resources.configuration.orientation)
@@ -1138,7 +1152,62 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
             // Setup resilient retry
             stream.getStreamClient().setReTries(5)
-            stream.startStream(endpoint)
+
+            // Multi-Path Cellular Bonding vs Direct RTMP
+            val targetUrl: String
+            if (streamConfig.isBondingEnabled) {
+                Log.i(TAG, "BondStream Multi-Path Bonding ENABLED. Starting local loopback proxy...")
+                if (::headerRowBonding.isInitialized) {
+                    headerRowBonding.visibility = View.VISIBLE
+                    tvBondingBadge.text = "CONNECTING"
+                    tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.surface_card))
+                    tvBondingMetrics.text = "Initializing multi-path UDP..."
+                }
+
+                val token = streamConfig.bondingAuthToken.ifBlank { streamConfig.streamKey }
+                val session = com.streamezy.capture.bonding.BondSession(
+                    this,
+                    streamConfig.bondingServerHost,
+                    streamConfig.bondingServerPort,
+                    token
+                ).apply {
+                    mode = com.streamezy.capture.bonding.BondingMode.ON
+                    onMetricsUpdated = { metrics ->
+                        runOnUiThread {
+                            updateBondingHeaderUI(metrics)
+                        }
+                    }
+                    onAuthFailed = { reason ->
+                        runOnUiThread {
+                            Toast.makeText(this@MainActivity, "Bonding Auth Failed: $reason", Toast.LENGTH_LONG).show()
+                            if (streamConfig.isAutoFallbackEnabled) {
+                                Toast.makeText(this@MainActivity, "Auto-falling back to Direct RTMP...", Toast.LENGTH_SHORT).show()
+                                stopLiveStream()
+                                streamConfig.isBondingEnabled = false
+                                startLiveStream()
+                            }
+                        }
+                    }
+                    start()
+                }
+                bondSession = session
+
+                val proxy = com.streamezy.capture.bonding.BondRtmpProxy(session)
+                val proxyPort = proxy.start()
+                bondRtmpProxy = proxy
+
+                val key = streamConfig.streamKey.trim().ifEmpty { "live" }
+                targetUrl = "rtmp://127.0.0.1:$proxyPort/live/$key"
+                Log.i(TAG, "RootEncoder routing via BondStream loopback proxy: $targetUrl")
+            } else {
+                if (::headerRowBonding.isInitialized) {
+                    headerRowBonding.visibility = View.GONE
+                }
+                targetUrl = endpoint
+                Log.i(TAG, "Direct RTMP streaming: $targetUrl")
+            }
+
+            stream.startStream(targetUrl)
         } catch (e: Throwable) {
             Log.e(TAG, "startStream failed", e)
             btnLive.isEnabled = true
@@ -1147,11 +1216,49 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
     }
 
+    private fun updateBondingHeaderUI(metrics: com.streamezy.capture.bonding.BondMetrics) {
+        if (!::headerRowBonding.isInitialized) return
+        if (!streamConfig.isBondingEnabled) {
+            headerRowBonding.visibility = View.GONE
+            return
+        }
+        headerRowBonding.visibility = View.VISIBLE
+
+        if (metrics.isBonded) {
+            tvBondingBadge.text = "BONDED"
+            tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
+        } else if (metrics.activePathCount > 0) {
+            tvBondingBadge.text = "1 PATH"
+            tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_blue))
+        } else {
+            tvBondingBadge.text = "OFFLINE"
+            tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.text_secondary))
+        }
+
+        val netSummary = metrics.paths.filter { it.status == com.streamezy.capture.bonding.PathStatus.ONLINE }
+            .joinToString(" ") { "${it.name} ●" }
+        tvBondingNetworks.text = if (netSummary.isNotBlank()) netSummary else "Searching Paths..."
+
+        tvBondingMetrics.text = String.format("↑ %.1f Mbps | %dms | %.1f%% loss",
+            metrics.combinedUploadMbps, metrics.averageLatencyMs, metrics.packetLossPct)
+    }
+
     private fun stopLiveStream() {
         try {
             genericStream?.stopStream()
         } catch (e: Exception) {
             Log.e(TAG, "stopStream error", e)
+        }
+        try {
+            bondRtmpProxy?.stop()
+            bondRtmpProxy = null
+            bondSession?.stop()
+            bondSession = null
+        } catch (e: Exception) {
+            Log.w(TAG, "Bonding shutdown error", e)
+        }
+        if (::headerRowBonding.isInitialized) {
+            headerRowBonding.visibility = View.GONE
         }
         onDisconnect()
     }
@@ -1376,9 +1483,73 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         btnRatio9x16.setOnClickListener { tempRatio = "9:16"; updateRatioUI() }
         btnRatio4x3.setOnClickListener { tempRatio = "4:3"; updateRatioUI() }
 
+        // BondStream UI Binding
+        val switchBonding = dialogView.findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchBonding)
+        val etBondingHost = dialogView.findViewById<EditText>(R.id.etBondingHost)
+        val etBondingPort = dialogView.findViewById<EditText>(R.id.etBondingPort)
+        val etBondingAuthToken = dialogView.findViewById<EditText>(R.id.etBondingAuthToken)
+        val switchAutoFallback = dialogView.findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchAutoFallback)
+        val btnTestBonding = dialogView.findViewById<Button>(R.id.btnTestBonding)
+        val tvTestBondingResults = dialogView.findViewById<TextView>(R.id.tvTestBondingResults)
+        val tvBondingPathStatus = dialogView.findViewById<TextView>(R.id.tvBondingPathStatus)
+
+        switchBonding.isChecked = streamConfig.isBondingEnabled
+        etBondingHost.setText(streamConfig.bondingServerHost)
+        etBondingPort.setText(streamConfig.bondingServerPort.toString())
+        etBondingAuthToken?.setText(streamConfig.bondingAuthToken)
+        switchAutoFallback?.isChecked = streamConfig.isAutoFallbackEnabled
+
+        btnTestBonding?.setOnClickListener {
+            btnTestBonding.isEnabled = false
+            btnTestBonding.text = "Testing Paths..."
+            tvTestBondingResults?.visibility = View.VISIBLE
+            tvTestBondingResults?.text = "Probing multi-path connectivity..."
+
+            val host = etBondingHost.text.toString().trim().ifEmpty { "192.168.29.184" }
+            val port = etBondingPort.text.toString().toIntOrNull() ?: 5000
+            val token = etBondingAuthToken?.text?.toString()?.trim()?.ifEmpty { etStreamKey.text.toString().trim() } ?: ""
+
+            val testSession = com.streamezy.capture.bonding.BondSession(this, host, port, token)
+            testSession.runBenchmarkTest(
+                durationSeconds = 4,
+                onProgress = { progress ->
+                    runOnUiThread { tvTestBondingResults?.text = progress }
+                },
+                onComplete = { success, summary ->
+                    runOnUiThread {
+                        btnTestBonding.isEnabled = true
+                        btnTestBonding.text = "Test Multi-Path Connection"
+                        tvTestBondingResults?.text = summary
+                        tvTestBondingResults?.setTextColor(
+                            ContextCompat.getColor(this, if (success) R.color.accent_green else R.color.accent_red)
+                        )
+                    }
+                }
+            )
+        }
+
+        // Quick path scan display
+        try {
+            val netMgr = com.streamezy.capture.bonding.AndroidNetworkManager(this)
+            val paths = netMgr.getActivePaths()
+            if (paths.isEmpty()) {
+                tvBondingPathStatus.text = "No active network paths found"
+            } else {
+                val pathSummary = paths.joinToString(", ") { "${it.displayName} (${it.status})" }
+                tvBondingPathStatus.text = "Detected paths: $pathSummary"
+            }
+        } catch (e: Exception) {
+            tvBondingPathStatus.text = "Path detection ready"
+        }
+
         btnSave.setOnClickListener {
             streamConfig.rtmpUrl = etRtmpUrl.text.toString().trim()
             streamConfig.streamKey = etStreamKey.text.toString().trim()
+            streamConfig.isBondingEnabled = switchBonding.isChecked
+            streamConfig.bondingServerHost = etBondingHost.text.toString().trim().ifEmpty { "192.168.29.184" }
+            streamConfig.bondingServerPort = etBondingPort.text.toString().toIntOrNull() ?: 5000
+            streamConfig.bondingAuthToken = etBondingAuthToken?.text?.toString()?.trim() ?: ""
+            streamConfig.isAutoFallbackEnabled = switchAutoFallback?.isChecked ?: true
             val ratioChanged = streamConfig.selectedAspectRatio != tempRatio
             streamConfig.selectedAspectRatio = tempRatio
 

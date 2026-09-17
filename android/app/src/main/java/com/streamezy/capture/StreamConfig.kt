@@ -50,6 +50,33 @@ class StreamConfig(context: Context) {
         get() = prefs.getString("stream_key", DEFAULT_STREAM_KEY) ?: DEFAULT_STREAM_KEY
         set(value) = prefs.edit().putString("stream_key", value.trim()).apply()
 
+    var isBondingEnabled: Boolean
+        get() = prefs.getBoolean("bonding_enabled", false)
+        set(value) = prefs.edit().putBoolean("bonding_enabled", value).apply()
+
+    var bondingServerHost: String
+        get() = prefs.getString("bonding_server_host", "192.168.29.184") ?: "192.168.29.184"
+        set(value) = prefs.edit().putString("bonding_server_host", value.trim()).apply()
+
+    var bondingServerPort: Int
+        get() = prefs.getInt("bonding_server_port", 5000)
+        set(value) = prefs.edit().putInt("bonding_server_port", value).apply()
+
+    var bondingMode: String
+        get() = prefs.getString("bonding_mode", if (isBondingEnabled) "ON" else "OFF") ?: "OFF"
+        set(value) {
+            prefs.edit().putString("bonding_mode", value).apply()
+            isBondingEnabled = (value == "ON")
+        }
+
+    var bondingAuthToken: String
+        get() = prefs.getString("bonding_auth_token", "") ?: ""
+        set(value) = prefs.edit().putString("bonding_auth_token", value.trim()).apply()
+
+    var isAutoFallbackEnabled: Boolean
+        get() = prefs.getBoolean("bonding_auto_fallback", true)
+        set(value) = prefs.edit().putBoolean("bonding_auto_fallback", value).apply()
+
     val fullStreamEndpoint: String
         get() {
             val base = rtmpUrl.removeSuffix("/")

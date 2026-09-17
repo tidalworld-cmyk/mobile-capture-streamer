@@ -155,6 +155,52 @@
                 android:textSize="10sp"
                 android:fontFamily="monospace" />
         </LinearLayout>
+
+        <!-- Line 3: BondStream Status (visible when Bonding is ON) -->
+        <LinearLayout
+            android:id="@+id/headerRowBonding"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <!-- Bonding Badge -->
+            <TextView
+                android:id="@+id/tvBondingBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="#10B981"
+                android:paddingHorizontal="4dp"
+                android:paddingVertical="1dp"
+                android:text="BONDED"
+                android:textColor="@color/white"
+                android:textSize="9sp"
+                android:textStyle="bold" />
+
+            <!-- Active Interfaces Indicator -->
+            <TextView
+                android:id="@+id/tvBondingNetworks"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text="Wi-Fi ● SIM 1 ●"
+                android:textColor="@color/white"
+                android:textSize="10sp" />
+
+            <!-- Combined Speed & Latency -->
+            <TextView
+                android:id="@+id/tvBondingMetrics"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:text="↑ 0.0 Mbps | 0ms | 0.0% loss"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp"
+                android:fontFamily="monospace" />
+        </LinearLayout>
     </LinearLayout>
 
     <!-- Transparent Audio Control Panel Layer (Hidden by default, toggled via btnAudioControl) -->
