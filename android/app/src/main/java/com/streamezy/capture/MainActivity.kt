@@ -978,6 +978,17 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
     }
 
+    private fun updateBatteryDisplay(text: String, color: Int) {
+        if (::tvBatteryStatusPortrait.isInitialized) {
+            tvBatteryStatusPortrait.text = text
+            tvBatteryStatusPortrait.setTextColor(color)
+        }
+        if (::tvBatteryStatusLandscape.isInitialized) {
+            tvBatteryStatusLandscape.text = text
+            tvBatteryStatusLandscape.setTextColor(color)
+        }
+    }
+
     private fun checkUsbConnectedInitially() {
         try {
             val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager
