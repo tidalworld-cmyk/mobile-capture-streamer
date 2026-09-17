@@ -7,10 +7,14 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.BatteryManager
@@ -91,6 +95,30 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         override fun run() {
             updateAudioProgressTick()
             audioProgressHandler.postDelayed(this, 500)
+        }
+    }
+
+    private lateinit var layoutAudioStatusPanel: LinearLayout
+    private lateinit var tvAudioLiveStatus: TextView
+    private lateinit var btnMasterMute: Button
+    private lateinit var tileSourceMobile: LinearLayout
+    private lateinit var tvSourceMobileBadge: TextView
+    private lateinit var tileSourceExternal: LinearLayout
+    private lateinit var tvSourceExternalBadge: TextView
+    private lateinit var tileSourceCustom: LinearLayout
+    private lateinit var tvSourceCustomBadge: TextView
+    private lateinit var tvMasterVolumeLabel: TextView
+    private lateinit var btnMasterVolDown: Button
+    private lateinit var seekMasterVolume: SeekBar
+    private lateinit var btnMasterVolUp: Button
+
+    private var isExternalAudioConnected = false
+    private val audioDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+            checkUsbAudioState()
+        }
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+            checkUsbAudioState()
         }
     }
 
@@ -276,6 +304,14 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             setupListeners()
             registerUsbReceiver()
             registerBatteryReceiver()
+            try {
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    audioManager?.registerAudioDeviceCallback(audioDeviceCallback, Handler(Looper.getMainLooper()))
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "registerAudioDeviceCallback failed", e)
+            }
 
             if (allPermissionsGranted()) {
                 initStreamEngine()
@@ -349,9 +385,26 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         ivOtgIcon = findViewById(R.id.ivOtgIcon)
         btnLive = findViewById(R.id.btnLive)
 
+        // Compact Audio Status Panel on Home Screen
+        layoutAudioStatusPanel = findViewById(R.id.layoutAudioStatusPanel)
+        tvAudioLiveStatus = findViewById(R.id.tvAudioLiveStatus)
+        btnMasterMute = findViewById(R.id.btnMasterMute)
+        tileSourceMobile = findViewById(R.id.tileSourceMobile)
+        tvSourceMobileBadge = findViewById(R.id.tvSourceMobileBadge)
+        tileSourceExternal = findViewById(R.id.tileSourceExternal)
+        tvSourceExternalBadge = findViewById(R.id.tvSourceExternalBadge)
+        tileSourceCustom = findViewById(R.id.tileSourceCustom)
+        tvSourceCustomBadge = findViewById(R.id.tvSourceCustomBadge)
+        tvMasterVolumeLabel = findViewById(R.id.tvMasterVolumeLabel)
+        btnMasterVolDown = findViewById(R.id.btnMasterVolDown)
+        seekMasterVolume = findViewById(R.id.seekMasterVolume)
+        btnMasterVolUp = findViewById(R.id.btnMasterVolUp)
+
         updateOrientationHint(resources.configuration.orientation)
         updateHeaderOrientation(resources.configuration.orientation)
         checkUsbConnectedInitially()
+        checkUsbAudioState()
+        updateAudioStatusPanelUI()
     }
 
     private fun setupListeners() {
@@ -477,6 +530,208 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         tileOtgCam.setOnClickListener { selectOtgCamera() }
 
         btnSettings.setOnClickListener { showSettingsDialog() }
+
+        tileSourceMobile.setOnClickListener { selectAudioSource(AudioSourceType.MOBILE) }
+        tileSourceExternal.setOnClickListener { selectAudioSource(AudioSourceType.EXTERNAL) }
+        tileSourceCustom.setOnClickListener { selectAudioSource(AudioSourceType.CUSTOM) }
+
+        btnMasterMute.setOnClickListener { toggleMasterMute() }
+
+        seekMasterVolume.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                audioProcessor.masterVolume = progress / 100f
+                updateAudioStatusPanelUI()
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        btnMasterVolDown.setOnClickListener {
+            val p = (seekMasterVolume.progress - 5).coerceAtLeast(0)
+            seekMasterVolume.progress = p
+        }
+
+        btnMasterVolUp.setOnClickListener {
+            val p = (seekMasterVolume.progress + 5).coerceAtMost(100)
+            seekMasterVolume.progress = p
+        }
+    }
+
+    private fun checkUsbAudioState() {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val inputs = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
+        val hasUsb = inputs.any {
+            it.type == AudioDeviceInfo.TYPE_USB_DEVICE || it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+        }
+        val changed = isExternalAudioConnected != hasUsb
+        isExternalAudioConnected = hasUsb
+        runOnUiThread {
+            if (changed) {
+                if (!hasUsb && audioProcessor.activeSource == AudioSourceType.EXTERNAL) {
+                    audioProcessor.activeSource = AudioSourceType.MOBILE
+                    routeAudioToBuiltinMic()
+                    Toast.makeText(this@MainActivity, "🔌 External Audio disconnected. Switched to Mobile Audio.", Toast.LENGTH_LONG).show()
+                } else if (hasUsb) {
+                    Toast.makeText(this@MainActivity, "🔌 External USB Audio detected!", Toast.LENGTH_SHORT).show()
+                }
+            }
+            updateAudioStatusPanelUI()
+        }
+    }
+
+    private fun selectAudioSource(type: AudioSourceType) {
+        when (type) {
+            AudioSourceType.MOBILE -> {
+                audioProcessor.activeSource = AudioSourceType.MOBILE
+                routeAudioToBuiltinMic()
+                if (audioProcessor.isPlaying) {
+                    audioProcessor.pauseBackground()
+                    updatePlaybackUIState(isPlaying = false, isPaused = true)
+                }
+                updateAudioStatusPanelUI()
+                Toast.makeText(this, "Active: 🎙️ Mobile Audio", Toast.LENGTH_SHORT).show()
+            }
+            AudioSourceType.EXTERNAL -> {
+                if (!isExternalAudioConnected) {
+                    Toast.makeText(this, "🔌 External USB/OTG Audio Disconnected. Plug in USB mic or capture card.", Toast.LENGTH_LONG).show()
+                    return
+                }
+                audioProcessor.activeSource = AudioSourceType.EXTERNAL
+                routeAudioToUsbDevice()
+                if (audioProcessor.isPlaying) {
+                    audioProcessor.pauseBackground()
+                    updatePlaybackUIState(isPlaying = false, isPaused = true)
+                }
+                updateAudioStatusPanelUI()
+                Toast.makeText(this, "Active: 🔌 External USB/OTG Audio", Toast.LENGTH_SHORT).show()
+            }
+            AudioSourceType.CUSTOM -> {
+                if (!audioProcessor.hasBackgroundAudio()) {
+                    Toast.makeText(this, "Select an audio track first for Custom Audio", Toast.LENGTH_SHORT).show()
+                    audioPickerLauncher.launch("audio/*")
+                    return
+                }
+                audioProcessor.activeSource = AudioSourceType.CUSTOM
+                audioProcessor.playBackground()
+                updatePlaybackUIState(isPlaying = true, isPaused = false)
+                updateAudioStatusPanelUI()
+                Toast.makeText(this, "Active: 🎵 Custom Audio (Mic Muted)", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun routeAudioToBuiltinMic() {
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                audioManager.clearCommunicationDevice()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "routeAudioToBuiltinMic error", e)
+        }
+    }
+
+    private fun routeAudioToUsbDevice() {
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val devices = audioManager.availableCommunicationDevices
+                val usbDevice = devices.firstOrNull {
+                    it.type == AudioDeviceInfo.TYPE_USB_DEVICE || it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+                }
+                if (usbDevice != null) {
+                    audioManager.setCommunicationDevice(usbDevice)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "routeAudioToUsbDevice error", e)
+        }
+    }
+
+    private fun toggleMasterMute() {
+        audioProcessor.isMasterMuted = !audioProcessor.isMasterMuted
+        updateAudioStatusPanelUI()
+        if (audioProcessor.isMasterMuted) {
+            Toast.makeText(this, "🔇 Master Output MUTED (Microphone stays connected)", Toast.LENGTH_SHORT).show()
+        } else {
+            val pct = if (::seekMasterVolume.isInitialized) seekMasterVolume.progress else 75
+            Toast.makeText(this, "🔊 Master Output UNMUTED ($pct%)", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun updateAudioStatusPanelUI() {
+        if (!::tvAudioLiveStatus.isInitialized) return
+        runOnUiThread {
+            val src = audioProcessor.activeSource
+            val isMuted = audioProcessor.isMasterMuted
+            val volPct = if (::seekMasterVolume.isInitialized) seekMasterVolume.progress else (audioProcessor.masterVolume * 100).toInt()
+
+            // 1. Mobile Pill
+            if (src == AudioSourceType.MOBILE) {
+                tileSourceMobile.setBackgroundResource(R.drawable.bg_audio_source_active)
+                tvSourceMobileBadge.text = "ON"
+                tvSourceMobileBadge.setBackgroundColor(Color.parseColor("#10B981"))
+            } else {
+                tileSourceMobile.setBackgroundResource(R.drawable.bg_audio_source_inactive)
+                tvSourceMobileBadge.text = "OFF"
+                tvSourceMobileBadge.setBackgroundColor(Color.parseColor("#4B5563"))
+            }
+
+            // 2. External Pill
+            if (!isExternalAudioConnected) {
+                tileSourceExternal.setBackgroundResource(R.drawable.bg_audio_source_disconnected)
+                tvSourceExternalBadge.text = "DISC"
+                tvSourceExternalBadge.setBackgroundColor(Color.parseColor("#D97706"))
+            } else if (src == AudioSourceType.EXTERNAL) {
+                tileSourceExternal.setBackgroundResource(R.drawable.bg_audio_source_active)
+                tvSourceExternalBadge.text = "ON"
+                tvSourceExternalBadge.setBackgroundColor(Color.parseColor("#10B981"))
+            } else {
+                tileSourceExternal.setBackgroundResource(R.drawable.bg_audio_source_inactive)
+                tvSourceExternalBadge.text = "OFF"
+                tvSourceExternalBadge.setBackgroundColor(Color.parseColor("#4B5563"))
+            }
+
+            // 3. Custom Pill
+            if (!audioProcessor.hasBackgroundAudio()) {
+                tileSourceCustom.setBackgroundResource(R.drawable.bg_audio_source_inactive)
+                tvSourceCustomBadge.text = "NO FILE"
+                tvSourceCustomBadge.setBackgroundColor(Color.parseColor("#4B5563"))
+            } else if (src == AudioSourceType.CUSTOM) {
+                tileSourceCustom.setBackgroundResource(R.drawable.bg_audio_source_active)
+                tvSourceCustomBadge.text = "ON"
+                tvSourceCustomBadge.setBackgroundColor(Color.parseColor("#10B981"))
+            } else {
+                tileSourceCustom.setBackgroundResource(R.drawable.bg_audio_source_inactive)
+                tvSourceCustomBadge.text = "OFF"
+                tvSourceCustomBadge.setBackgroundColor(Color.parseColor("#4B5563"))
+            }
+
+            // 4. Master Mute Button & Volume Label
+            if (isMuted) {
+                btnMasterMute.text = "🔊 UNMUTE"
+                btnMasterMute.setBackgroundColor(Color.parseColor("#DC2626"))
+                tvMasterVolumeLabel.text = "🔇 MUTED"
+            } else {
+                btnMasterMute.text = "🔇 MUTE"
+                btnMasterMute.setBackgroundColor(Color.parseColor("#374151"))
+                tvMasterVolumeLabel.text = "🔊 Master: $volPct%"
+            }
+
+            // 5. Live Status Readout
+            val prefix = if (isStreaming) "● LIVE   " else "● READY  "
+            val srcName = when (src) {
+                AudioSourceType.MOBILE -> "🎙️ Mobile Audio"
+                AudioSourceType.EXTERNAL -> if (isExternalAudioConnected) "🔌 External Audio" else "🔌 Ext (Disconnected)"
+                AudioSourceType.CUSTOM -> "🎵 Custom Audio"
+            }
+            val volStatus = if (isMuted) "🔇 MUTED" else "🔊 $volPct%"
+            tvAudioLiveStatus.text = "$prefix$srcName   $volStatus"
+            tvAudioLiveStatus.setTextColor(
+                if (isStreaming) ContextCompat.getColor(this, R.color.accent_red)
+                else ContextCompat.getColor(this, R.color.accent_green)
+            )
+        }
     }
 
     private fun toggleAudioPanel() {
@@ -1143,6 +1398,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_red))
 
             Toast.makeText(this, "Live Broadcast Connected!", Toast.LENGTH_SHORT).show()
+            updateAudioStatusPanelUI()
         }
     }
 
@@ -1167,6 +1423,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 tvLiveBadge.text = "RECONNECTING"
                 tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_blue))
                 Toast.makeText(this, "Reconnecting live stream...", Toast.LENGTH_SHORT).show()
+                updateAudioStatusPanelUI()
             }
         } else {
             try {
@@ -1185,6 +1442,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
                 tvLiveBadge.text = getString(R.string.offline_badge)
                 tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.border_inactive))
+                updateAudioStatusPanelUI()
 
                 val userMessage = when {
                     safeReason.contains("end of stream", ignoreCase = true) || safeReason.contains("configure stream", ignoreCase = true) ->
@@ -1237,6 +1495,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
             tvLiveBadge.text = getString(R.string.offline_badge)
             tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.border_inactive))
+            updateAudioStatusPanelUI()
         }
     }
 
@@ -1317,6 +1576,12 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         } catch (e: Exception) {}
         try {
             unregisterReceiver(batteryReceiver)
+        } catch (e: Exception) {}
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback)
+            }
         } catch (e: Exception) {}
         uptimeHandler.removeCallbacks(uptimeRunnable)
         try {

@@ -6,13 +6,25 @@ import java.nio.ByteOrder
 import kotlin.math.abs
 import kotlin.math.max
 
+enum class AudioSourceType {
+    MOBILE,      // Built-in phone microphone
+    EXTERNAL,    // OTG / USB capture card or USB mic
+    CUSTOM       // Background custom audio track
+}
+
 /**
  * Real-time DSP audio processor for RootEncoder pipeline.
  * - Live microphone mute (for 100% clean background music playback)
  * - Continuous noise reduction slider (0% to 100%) with spectral rumble & hiss filter
  * - Real-time background audio mixer (MP3/WAV/AAC decoded PCM) with volume & looping
+ * - Master volume control (0% to 100%) & non-intrusive Master Mute
+ * - Active source routing (Mobile, External OTG/USB, Custom)
  */
 class AudioProcessor : CustomAudioEffect() {
+
+    @Volatile var activeSource: AudioSourceType = AudioSourceType.MOBILE
+    @Volatile var masterVolume: Float = 0.75f // Default 75% master volume
+    @Volatile var isMasterMuted: Boolean = false
 
     @Volatile var isLiveMuted: Boolean = false
     @Volatile var micVolume: Float = 1.0f
@@ -98,9 +110,9 @@ class AudioProcessor : CustomAudioEffect() {
             val playing = isBgPlaying && bg != null && bg.isNotEmpty()
 
             for (i in 0 until numSamples) {
-                // 1. Process Live Microphone
+                // 1. Process Live Microphone (Active for Mobile & External OTG/USB sources, suppressed if Custom Audio is selected or if live-muted)
                 var micVal: Float = 0f
-                if (!isLiveMuted) {
+                if (activeSource != AudioSourceType.CUSTOM && !isLiveMuted) {
                     val rawSample = tempShorts[i].toFloat()
 
                     if (noiseRatio > 0f) {
@@ -143,8 +155,12 @@ class AudioProcessor : CustomAudioEffect() {
                     }
                 }
 
-                // 3. Mix & Clamp to 16-bit range (-32768 to 32767)
-                val mixed = (micVal + bgVal).toInt().coerceIn(-32768, 32767)
+                // 3. Mix & Apply Master Volume & Master Mute (-32768 to 32767)
+                val mixed = if (isMasterMuted) {
+                    0
+                } else {
+                    ((micVal + bgVal) * masterVolume).toInt().coerceIn(-32768, 32767)
+                }
                 tempShorts[i] = mixed.toShort()
             }
         }

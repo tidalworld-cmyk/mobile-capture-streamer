@@ -558,14 +558,14 @@
         android:id="@+id/layoutRotateHint"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="12dp"
+        android:layout_marginBottom="4dp"
         android:background="@drawable/bg_rounded_card"
         android:gravity="center"
         android:orientation="horizontal"
         android:paddingHorizontal="14dp"
         android:paddingVertical="6dp"
         android:visibility="visible"
-        app:layout_constraintBottom_toTopOf="@id/bottomDock"
+        app:layout_constraintBottom_toTopOf="@id/layoutAudioStatusPanel"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
 
@@ -582,6 +582,232 @@
             android:text="Rotate phone for full screen (16:9)"
             android:textColor="@color/text_secondary"
             android:textSize="11sp" />
+    </LinearLayout>
+
+    <!-- Compact Audio Status & Controls Panel (Home Screen) -->
+    <LinearLayout
+        android:id="@+id/layoutAudioStatusPanel"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginBottom="6dp"
+        android:background="@drawable/bg_rounded_card"
+        android:orientation="vertical"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="7dp"
+        app:layout_constraintBottom_toTopOf="@id/bottomDock"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Line 1: Live Status Readout & Master Mute Button -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvAudioLiveStatus"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="🎙️ Mobile Audio   🔊 75%"
+                android:textColor="@color/accent_green"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace" />
+
+            <!-- Master Mute Toggle Button -->
+            <Button
+                android:id="@+id/btnMasterMute"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:backgroundTint="#374151"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="0dp"
+                android:minHeight="0dp"
+                android:minWidth="0dp"
+                android:text="🔇 MUTE"
+                android:textColor="@color/white"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                app:cornerRadius="6dp" />
+        </LinearLayout>
+
+        <!-- Line 2: Active Audio Source Indicator & Switcher Row (3 interactive source tiles) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="5dp"
+            android:orientation="horizontal"
+            android:weightSum="3">
+
+            <!-- Mobile Audio Pill -->
+            <LinearLayout
+                android:id="@+id/tileSourceMobile"
+                android:layout_width="0dp"
+                android:layout_height="32dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="3dp"
+                android:background="@drawable/bg_audio_source_active"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:orientation="horizontal"
+                android:paddingHorizontal="4dp">
+
+                <TextView
+                    android:id="@+id/tvSourceMobileLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🎙️ Mobile"
+                    android:textColor="@color/white"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvSourceMobileBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:background="#10B981"
+                    android:paddingHorizontal="3dp"
+                    android:paddingVertical="1dp"
+                    android:text="ON"
+                    android:textColor="@color/white"
+                    android:textSize="8sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- External Audio (OTG/USB) Pill -->
+            <LinearLayout
+                android:id="@+id/tileSourceExternal"
+                android:layout_width="0dp"
+                android:layout_height="32dp"
+                android:layout_weight="1"
+                android:layout_marginHorizontal="2dp"
+                android:background="@drawable/bg_audio_source_inactive"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:orientation="horizontal"
+                android:paddingHorizontal="4dp">
+
+                <TextView
+                    android:id="@+id/tvSourceExternalLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🔌 External"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvSourceExternalBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:background="#4B5563"
+                    android:paddingHorizontal="3dp"
+                    android:paddingVertical="1dp"
+                    android:text="OFF"
+                    android:textColor="@color/white"
+                    android:textSize="8sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Custom Audio Pill -->
+            <LinearLayout
+                android:id="@+id/tileSourceCustom"
+                android:layout_width="0dp"
+                android:layout_height="32dp"
+                android:layout_weight="1"
+                android:layout_marginStart="3dp"
+                android:background="@drawable/bg_audio_source_inactive"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:orientation="horizontal"
+                android:paddingHorizontal="4dp">
+
+                <TextView
+                    android:id="@+id/tvSourceCustomLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🎵 Custom"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvSourceCustomBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:background="#4B5563"
+                    android:paddingHorizontal="3dp"
+                    android:paddingVertical="1dp"
+                    android:text="OFF"
+                    android:textColor="@color/white"
+                    android:textSize="8sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Line 3: Master Volume Slider & Steppers -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="5dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvMasterVolumeLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🔊 Master: 75%"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp"
+                android:fontFamily="monospace" />
+
+            <!-- Quick Vol Down (-5%) -->
+            <Button
+                android:id="@+id/btnMasterVolDown"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:layout_marginStart="6dp"
+                android:backgroundTint="#374151"
+                android:padding="0dp"
+                android:minHeight="0dp"
+                android:minWidth="0dp"
+                android:text="🔉"
+                android:textColor="@color/white"
+                android:textSize="10sp"
+                app:cornerRadius="13dp" />
+
+            <SeekBar
+                android:id="@+id/seekMasterVolume"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:max="100"
+                android:progress="75" />
+
+            <!-- Quick Vol Up (+5%) -->
+            <Button
+                android:id="@+id/btnMasterVolUp"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:backgroundTint="#374151"
+                android:padding="0dp"
+                android:minHeight="0dp"
+                android:minWidth="0dp"
+                android:text="🔊"
+                android:textColor="@color/white"
+                android:textSize="10sp"
+                app:cornerRadius="13dp" />
+        </LinearLayout>
     </LinearLayout>
 
     <!-- Bottom Fixed Footer Dock (Small Icons & Compact) -->
