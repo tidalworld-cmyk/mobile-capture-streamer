@@ -33,6 +33,7 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -94,13 +95,21 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private val audioProgressRunnable = object : Runnable {
         override fun run() {
             updateAudioProgressTick()
-            audioProgressHandler.postDelayed(this, 500)
+            if (::pbAudioLevel.isInitialized) {
+                pbAudioLevel.progress = audioProcessor.audioLevel
+            }
+            audioProgressHandler.postDelayed(this, 60)
         }
     }
 
     private lateinit var layoutAudioStatusPanel: LinearLayout
     private lateinit var tvAudioLiveStatus: TextView
     private lateinit var btnMasterMute: Button
+    private lateinit var btnCloseAudioStatusPanel: ImageButton
+    private lateinit var pbAudioLevel: ProgressBar
+    private lateinit var btnShowAudioStatusPanel: LinearLayout
+    private lateinit var btnDeleteAudio: ImageButton
+    private var isAudioStatusPanelMinimized = false
     private lateinit var tileSourceMobile: LinearLayout
     private lateinit var tvSourceMobileBadge: TextView
     private lateinit var tileSourceExternal: LinearLayout
@@ -144,11 +153,18 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                     audioProcessor.setBackgroundAudio(pcmData)
                     val seconds = pcmData.size / 44100
                     tvSelectedAudioName.text = "🎵 $fileName (${seconds / 60}m ${seconds % 60}s)"
+                    if (::btnDeleteAudio.isInitialized) {
+                        btnDeleteAudio.visibility = View.VISIBLE
+                    }
                     updatePlaybackUIState(isPlaying = true, isPaused = false)
+                    updateAudioStatusPanelUI()
                     Toast.makeText(this@MainActivity, "Audio loaded & ready to stream!", Toast.LENGTH_SHORT).show()
                 } catch (e: Throwable) {
                     Log.e(TAG, "Audio loading failed", e)
                     tvSelectedAudioName.text = "Failed: ${e.localizedMessage ?: "Unknown error"}"
+                    if (::btnDeleteAudio.isInitialized) {
+                        btnDeleteAudio.visibility = View.GONE
+                    }
                     Toast.makeText(this@MainActivity, "Audio decode error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                 }
             }
@@ -399,6 +415,10 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         btnMasterVolDown = findViewById(R.id.btnMasterVolDown)
         seekMasterVolume = findViewById(R.id.seekMasterVolume)
         btnMasterVolUp = findViewById(R.id.btnMasterVolUp)
+        pbAudioLevel = findViewById(R.id.pbAudioLevel)
+        btnCloseAudioStatusPanel = findViewById(R.id.btnCloseAudioStatusPanel)
+        btnShowAudioStatusPanel = findViewById(R.id.btnShowAudioStatusPanel)
+        btnDeleteAudio = findViewById(R.id.btnDeleteAudio)
 
         updateOrientationHint(resources.configuration.orientation)
         updateHeaderOrientation(resources.configuration.orientation)
@@ -555,6 +575,37 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             val p = (seekMasterVolume.progress + 5).coerceAtMost(100)
             seekMasterVolume.progress = p
         }
+
+        btnCloseAudioStatusPanel.setOnClickListener {
+            isAudioStatusPanelMinimized = true
+            layoutAudioStatusPanel.visibility = View.GONE
+            btnShowAudioStatusPanel.visibility = View.VISIBLE
+        }
+
+        btnShowAudioStatusPanel.setOnClickListener {
+            isAudioStatusPanelMinimized = false
+            layoutAudioStatusPanel.visibility = View.VISIBLE
+            btnShowAudioStatusPanel.visibility = View.GONE
+        }
+
+        btnDeleteAudio.setOnClickListener {
+            clearBackgroundAudioFile()
+        }
+    }
+
+    private fun clearBackgroundAudioFile() {
+        audioProcessor.clearBackgroundAudio()
+        stopLocalPreview()
+        selectedAudioUri = null
+        tvSelectedAudioName.text = "No audio file chosen"
+        btnDeleteAudio.visibility = View.GONE
+        updatePlaybackUIState(isPlaying = false, isPaused = false)
+        if (audioProcessor.activeSource == AudioSourceType.CUSTOM) {
+            audioProcessor.activeSource = AudioSourceType.MOBILE
+            routeAudioToBuiltinMic()
+        }
+        updateAudioStatusPanelUI()
+        Toast.makeText(this, "Background audio removed", Toast.LENGTH_SHORT).show()
     }
 
     private fun checkUsbAudioState() {
@@ -750,10 +801,22 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 headerRow2.visibility = View.GONE
                 tvStreamStatsLandscape.visibility = View.VISIBLE
                 tvBatteryStatusLandscape.visibility = View.VISIBLE
+                // In horizontal (landscape) mode, minimize audio controls to keep 16:9 preview fully unobstructed
+                if (::layoutAudioStatusPanel.isInitialized && ::btnShowAudioStatusPanel.isInitialized) {
+                    layoutAudioStatusPanel.visibility = View.GONE
+                    btnShowAudioStatusPanel.visibility = View.VISIBLE
+                }
             } else {
                 headerRow2.visibility = View.VISIBLE
                 tvStreamStatsLandscape.visibility = View.GONE
                 tvBatteryStatusLandscape.visibility = View.GONE
+                // In vertical (portrait) mode, restore if not manually minimized
+                if (::layoutAudioStatusPanel.isInitialized && ::btnShowAudioStatusPanel.isInitialized) {
+                    if (!isAudioStatusPanelMinimized) {
+                        layoutAudioStatusPanel.visibility = View.VISIBLE
+                        btnShowAudioStatusPanel.visibility = View.GONE
+                    }
+                }
             }
         }
     }

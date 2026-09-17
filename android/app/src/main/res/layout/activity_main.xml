@@ -399,15 +399,34 @@
                             android:textSize="11sp" />
                     </LinearLayout>
 
-                    <TextView
-                        android:id="@+id/tvSelectedAudioName"
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:ellipsize="middle"
-                        android:singleLine="true"
-                        android:text="No audio file chosen"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="10sp" />
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/tvSelectedAudioName"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:ellipsize="middle"
+                            android:singleLine="true"
+                            android:text="No audio file chosen"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="10sp" />
+
+                        <ImageButton
+                            android:id="@+id/btnDeleteAudio"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_marginStart="6dp"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:contentDescription="Delete Background Audio"
+                            android:src="@drawable/ic_delete"
+                            android:visibility="gone"
+                            app:tint="@color/accent_red" />
+                    </LinearLayout>
 
                     <!-- Playback Status & Duration Row -->
                     <LinearLayout
@@ -599,7 +618,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <!-- Line 1: Live Status Readout & Master Mute Button -->
+        <!-- Line 1: Live Status Readout, Master Mute Button & Close Button -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -632,7 +651,29 @@
                 android:textSize="10sp"
                 android:textStyle="bold"
                 app:cornerRadius="6dp" />
+
+            <!-- Close / Hide Panel Button (for horizontal & vertical mode) -->
+            <ImageButton
+                android:id="@+id/btnCloseAudioStatusPanel"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_marginStart="6dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Hide Audio Controls"
+                android:src="@drawable/ic_close"
+                app:tint="@color/text_secondary" />
         </LinearLayout>
+
+        <!-- Live Audio Level Indicator (VU Meter) -->
+        <ProgressBar
+            android:id="@+id/pbAudioLevel"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="5dp"
+            android:layout_marginTop="4dp"
+            android:max="100"
+            android:progress="0"
+            android:progressDrawable="@drawable/bg_audio_level_bar" />
 
         <!-- Line 2: Active Audio Source Indicator & Switcher Row (3 interactive source tiles) -->
         <LinearLayout
@@ -808,6 +849,32 @@
                 android:textSize="10sp"
                 app:cornerRadius="13dp" />
         </LinearLayout>
+    </LinearLayout>
+
+    <!-- Ultra-Compact Floating Pill to Show/Expand Audio Controls when Hidden -->
+    <LinearLayout
+        android:id="@+id/btnShowAudioStatusPanel"
+        android:layout_width="wrap_content"
+        android:layout_height="26dp"
+        android:layout_marginBottom="4dp"
+        android:background="@drawable/bg_rounded_card"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="10dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/bottomDock"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🎚️ Audio Controls  ▲"
+            android:textColor="@color/accent_blue"
+            android:textSize="10sp"
+            android:textStyle="bold" />
     </LinearLayout>
 
     <!-- Bottom Fixed Footer Dock (Small Icons & Compact) -->

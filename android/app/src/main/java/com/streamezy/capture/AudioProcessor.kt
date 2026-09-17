@@ -33,6 +33,10 @@ class AudioProcessor : CustomAudioEffect() {
     @Volatile var isBgPlaying: Boolean = false
     @Volatile var isLooping: Boolean = true
 
+    // Real-time VU meter audio level (0 to 100)
+    @Volatile var audioLevel: Int = 0
+    private var smoothedLevel: Float = 0f
+
     // Decoded background PCM audio samples (44100Hz 16-bit mono)
     private var bgSamples: ShortArray? = null
     private var bgSampleIndex: Int = 0
@@ -108,6 +112,7 @@ class AudioProcessor : CustomAudioEffect() {
         synchronized(this) {
             val bg = bgSamples
             val playing = isBgPlaying && bg != null && bg.isNotEmpty()
+            var peakVal = 0
 
             for (i in 0 until numSamples) {
                 // 1. Process Live Microphone (Active for Mobile & External OTG/USB sources, suppressed if Custom Audio is selected or if live-muted)
@@ -162,7 +167,18 @@ class AudioProcessor : CustomAudioEffect() {
                     ((micVal + bgVal) * masterVolume).toInt().coerceIn(-32768, 32767)
                 }
                 tempShorts[i] = mixed.toShort()
+                val a = abs(mixed)
+                if (a > peakVal) peakVal = a
             }
+
+            // Real-time VU meter calculation (0 to 100 with ballistic attack & decay)
+            val rawLevel = if (isMasterMuted) 0f else (peakVal / 327.67f).coerceIn(0f, 100f)
+            smoothedLevel = if (rawLevel > smoothedLevel) {
+                rawLevel // Fast attack
+            } else {
+                smoothedLevel * 0.82f // Smooth decay
+            }
+            audioLevel = smoothedLevel.toInt().coerceIn(0, 100)
         }
 
         // Write processed samples back into pcmBuffer
