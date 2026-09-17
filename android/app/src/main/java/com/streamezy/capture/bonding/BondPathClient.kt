@@ -36,7 +36,7 @@ class BondPathClient(
             serverAddress = InetAddress.getByName(serverHost)
             socket = DatagramSocket()
 
-            val net = path.androidNetwork
+            val net = path.network
             if (net != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
                 net.bindSocket(socket)
                 Log.i(TAG, "Socket successfully bound to Android Network ${path.name} ($net)")

@@ -1531,11 +1531,12 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         // Quick path scan display
         try {
             val netMgr = com.streamezy.capture.bonding.AndroidNetworkManager(this)
-            val paths = netMgr.getActivePaths()
+            netMgr.refreshCurrentNetworks()
+            val paths = netMgr.getUsablePaths()
             if (paths.isEmpty()) {
                 tvBondingPathStatus.text = "No active network paths found"
             } else {
-                val pathSummary = paths.joinToString(", ") { "${it.displayName} (${it.status})" }
+                val pathSummary = paths.joinToString(", ") { "${it.name} (${it.status})" }
                 tvBondingPathStatus.text = "Detected paths: $pathSummary"
             }
         } catch (e: Exception) {
