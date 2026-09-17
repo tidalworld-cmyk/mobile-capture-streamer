@@ -1,4 +1,4 @@
-﻿package com.streamezy.capture
+package com.streamezy.capture
 
 import com.pedro.encoder.input.audio.CustomAudioEffect
 import java.nio.ByteBuffer
@@ -63,6 +63,19 @@ class AudioProcessor : CustomAudioEffect() {
             bgSampleIndex = 0
         }
     }
+
+    val isPlaying: Boolean
+        get() = isBgPlaying
+
+    val currentPositionSeconds: Int
+        get() = synchronized(this) {
+            if (bgSamples != null && bgSamples!!.isNotEmpty()) (bgSampleIndex / 44100) else 0
+        }
+
+    val totalDurationSeconds: Int
+        get() = synchronized(this) {
+            if (bgSamples != null && bgSamples!!.isNotEmpty()) (bgSamples!!.size / 44100) else 0
+        }
 
     fun hasBackgroundAudio(): Boolean {
         return bgSamples != null && bgSamples!!.isNotEmpty()

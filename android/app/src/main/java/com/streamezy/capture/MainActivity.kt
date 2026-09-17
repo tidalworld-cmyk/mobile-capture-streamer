@@ -11,6 +11,8 @@ import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.media.MediaPlayer
+import android.net.Uri
 import android.os.BatteryManager
 import android.os.Bundle
 import android.os.Handler
@@ -52,8 +54,11 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private lateinit var textureView: TextureView
     private lateinit var tvLiveBadge: TextView
     private lateinit var tvUptime: TextView
-    private lateinit var tvStreamStats: TextView
-    private lateinit var tvBatteryStatus: TextView
+    private lateinit var headerRow2: LinearLayout
+    private lateinit var tvStreamStatsPortrait: TextView
+    private lateinit var tvBatteryStatusPortrait: TextView
+    private lateinit var tvStreamStatsLandscape: TextView
+    private lateinit var tvBatteryStatusLandscape: TextView
     private lateinit var layoutRotateHint: LinearLayout
     private lateinit var btnAudioControl: ImageButton
     private lateinit var btnSettings: ImageButton
@@ -67,12 +72,27 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private lateinit var seekNoiseReduction: SeekBar
     private lateinit var btnSelectAudio: Button
     private lateinit var tvSelectedAudioName: TextView
+    private lateinit var tvAudioStatus: TextView
+    private lateinit var tvAudioProgress: TextView
     private lateinit var btnPlayAudio: Button
     private lateinit var btnPauseAudio: Button
     private lateinit var btnStopAudio: Button
+    private lateinit var btnPreviewAudio: Button
+    private lateinit var cbMonitorAudio: CheckBox
     private lateinit var tvBgVolumeLabel: TextView
     private lateinit var seekBgVolume: SeekBar
     private lateinit var cbLoopAudio: CheckBox
+
+    private var selectedAudioUri: Uri? = null
+    private var previewPlayer: MediaPlayer? = null
+    private var isLocalPreviewing: Boolean = false
+    private val audioProgressHandler = Handler(Looper.getMainLooper())
+    private val audioProgressRunnable = object : Runnable {
+        override fun run() {
+            updateAudioProgressTick()
+            audioProgressHandler.postDelayed(this, 500)
+        }
+    }
 
     private lateinit var tileRearCam: LinearLayout
     private lateinit var tileFrontCam: LinearLayout
@@ -87,6 +107,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
     private val audioPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
+            selectedAudioUri = uri
             val fileName = AudioDecoder.getFileName(this, uri)
             tvSelectedAudioName.text = "Decoding: $fileName..."
             lifecycleScope.launch {
@@ -95,6 +116,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                     audioProcessor.setBackgroundAudio(pcmData)
                     val seconds = pcmData.size / 44100
                     tvSelectedAudioName.text = "🎵 $fileName (${seconds / 60}m ${seconds % 60}s)"
+                    updatePlaybackUIState(isPlaying = true, isPaused = false)
                     Toast.makeText(this@MainActivity, "Audio loaded & ready to stream!", Toast.LENGTH_SHORT).show()
                 } catch (e: Throwable) {
                     Log.e(TAG, "Audio loading failed", e)
@@ -199,16 +221,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             val batteryPct = if (level >= 0 && scale > 0) (level * 100 / scale) else 0
 
             if (isCharging) {
-                tvBatteryStatus.text = "⚡ $batteryPct% (Charging)"
-                tvBatteryStatus.setTextColor(ContextCompat.getColor(context, R.color.accent_green))
+                updateBatteryDisplay("⚡ $batteryPct% (Charging)", ContextCompat.getColor(context, R.color.accent_green))
             } else {
-                tvBatteryStatus.text = "🔋 $batteryPct%"
-                tvBatteryStatus.setTextColor(
-                    ContextCompat.getColor(
-                        context,
-                        if (batteryPct <= 20) R.color.accent_red else R.color.text_primary
-                    )
+                val color = ContextCompat.getColor(
+                    context,
+                    if (batteryPct <= 20) R.color.accent_red else R.color.text_primary
                 )
+                updateBatteryDisplay("🔋 $batteryPct%", color)
             }
         }
     }
@@ -292,8 +311,11 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         textureView = findViewById(R.id.textureView)
         tvLiveBadge = findViewById(R.id.tvLiveBadge)
         tvUptime = findViewById(R.id.tvUptime)
-        tvStreamStats = findViewById(R.id.tvStreamStats)
-        tvBatteryStatus = findViewById(R.id.tvBatteryStatus)
+        headerRow2 = findViewById(R.id.headerRow2)
+        tvStreamStatsPortrait = findViewById(R.id.tvStreamStatsPortrait)
+        tvBatteryStatusPortrait = findViewById(R.id.tvBatteryStatusPortrait)
+        tvStreamStatsLandscape = findViewById(R.id.tvStreamStatsLandscape)
+        tvBatteryStatusLandscape = findViewById(R.id.tvBatteryStatusLandscape)
         layoutRotateHint = findViewById(R.id.layoutRotateHint)
         btnAudioControl = findViewById(R.id.btnAudioControl)
         btnSettings = findViewById(R.id.btnSettings)
@@ -307,9 +329,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         seekNoiseReduction = findViewById(R.id.seekNoiseReduction)
         btnSelectAudio = findViewById(R.id.btnSelectAudio)
         tvSelectedAudioName = findViewById(R.id.tvSelectedAudioName)
+        tvAudioStatus = findViewById(R.id.tvAudioStatus)
+        tvAudioProgress = findViewById(R.id.tvAudioProgress)
         btnPlayAudio = findViewById(R.id.btnPlayAudio)
         btnPauseAudio = findViewById(R.id.btnPauseAudio)
         btnStopAudio = findViewById(R.id.btnStopAudio)
+        btnPreviewAudio = findViewById(R.id.btnPreviewAudio)
+        cbMonitorAudio = findViewById(R.id.cbMonitorAudio)
         tvBgVolumeLabel = findViewById(R.id.tvBgVolumeLabel)
         seekBgVolume = findViewById(R.id.seekBgVolume)
         cbLoopAudio = findViewById(R.id.cbLoopAudio)
@@ -324,6 +350,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         btnLive = findViewById(R.id.btnLive)
 
         updateOrientationHint(resources.configuration.orientation)
+        updateHeaderOrientation(resources.configuration.orientation)
         checkUsbConnectedInitially()
     }
 
@@ -395,23 +422,45 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 audioPickerLauncher.launch("audio/*")
             } else {
                 audioProcessor.playBackground()
-                Toast.makeText(this, "Background audio playing into stream", Toast.LENGTH_SHORT).show()
+                updatePlaybackUIState(isPlaying = true, isPaused = false)
+                if (cbMonitorAudio.isChecked) {
+                    startDeviceMonitor()
+                }
+                Toast.makeText(this, "Background audio playing to stream 🔊", Toast.LENGTH_SHORT).show()
             }
         }
 
         btnPauseAudio.setOnClickListener {
             audioProcessor.pauseBackground()
+            pauseDeviceMonitor()
+            updatePlaybackUIState(isPlaying = false, isPaused = true)
             Toast.makeText(this, "Background audio paused", Toast.LENGTH_SHORT).show()
         }
 
         btnStopAudio.setOnClickListener {
             audioProcessor.stopBackground()
+            stopDeviceMonitor()
+            updatePlaybackUIState(isPlaying = false, isPaused = false)
             Toast.makeText(this, "Background audio stopped", Toast.LENGTH_SHORT).show()
+        }
+
+        btnPreviewAudio.setOnClickListener {
+            toggleLocalPreview()
+        }
+
+        cbMonitorAudio.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked && audioProcessor.isPlaying) {
+                startDeviceMonitor()
+            } else if (!isChecked) {
+                stopDeviceMonitor()
+            }
         }
 
         seekBgVolume.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                audioProcessor.bgVolume = progress / 100f
+                val vol = progress / 100f
+                audioProcessor.bgVolume = vol
+                previewPlayer?.setVolume(vol, vol)
                 tvBgVolumeLabel.text = "Music Volume: $progress%"
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -420,6 +469,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
         cbLoopAudio.setOnCheckedChangeListener { _, isChecked ->
             audioProcessor.isLooping = isChecked
+            previewPlayer?.isLooping = isChecked
         }
 
         tileRearCam.setOnClickListener { selectRearCamera() }
@@ -437,6 +487,142 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 View.VISIBLE
             }
         }
+    }
+
+    private fun updateHeaderOrientation(orientation: Int) {
+        if (::headerRow2.isInitialized) {
+            if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                headerRow2.visibility = View.GONE
+                tvStreamStatsLandscape.visibility = View.VISIBLE
+                tvBatteryStatusLandscape.visibility = View.VISIBLE
+            } else {
+                headerRow2.visibility = View.VISIBLE
+                tvStreamStatsLandscape.visibility = View.GONE
+                tvBatteryStatusLandscape.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun updatePlaybackUIState(isPlaying: Boolean, isPaused: Boolean) {
+        runOnUiThread {
+            if (isPlaying) {
+                btnPlayAudio.text = "● PLAYING NOW"
+                btnPlayAudio.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
+                tvAudioStatus.text = "🔊 Playing to Stream (Broadcasting)"
+                tvAudioStatus.setTextColor(ContextCompat.getColor(this, R.color.accent_green))
+                btnPauseAudio.isEnabled = true
+                btnStopAudio.isEnabled = true
+            } else if (isPaused) {
+                btnPlayAudio.text = "▶ Resume Play"
+                btnPlayAudio.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_blue))
+                tvAudioStatus.text = "⏸ Paused"
+                tvAudioStatus.setTextColor(ContextCompat.getColor(this, R.color.border_active))
+                btnPauseAudio.isEnabled = false
+                btnStopAudio.isEnabled = true
+            } else {
+                btnPlayAudio.text = "▶ Play to Stream"
+                btnPlayAudio.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
+                tvAudioStatus.text = "⏹ Stopped (Not playing)"
+                tvAudioStatus.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+                btnPauseAudio.isEnabled = false
+                btnStopAudio.isEnabled = false
+            }
+        }
+    }
+
+    private fun updateAudioProgressTick() {
+        if (audioProcessor.isPlaying) {
+            val cur = audioProcessor.currentPositionSeconds
+            val tot = audioProcessor.totalDurationSeconds
+            val curM = cur / 60
+            val curS = cur % 60
+            val totM = tot / 60
+            val totS = tot % 60
+            tvAudioProgress.text = String.format("%02d:%02d / %02d:%02d", curM, curS, totM, totS)
+        } else if (!audioProcessor.hasBackgroundAudio()) {
+            tvAudioProgress.text = "00:00 / 00:00"
+        }
+    }
+
+    private fun toggleLocalPreview() {
+        val uri = selectedAudioUri
+        if (uri == null) {
+            Toast.makeText(this, "Select an audio file first to preview", Toast.LENGTH_SHORT).show()
+            audioPickerLauncher.launch("audio/*")
+            return
+        }
+
+        if (isLocalPreviewing) {
+            stopLocalPreview()
+            Toast.makeText(this, "Audio preview stopped", Toast.LENGTH_SHORT).show()
+        } else {
+            startLocalPreview(uri)
+            Toast.makeText(this, "Playing preview on phone speaker 🎧", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun startLocalPreview(uri: Uri) {
+        try {
+            previewPlayer?.release()
+            previewPlayer = MediaPlayer().apply {
+                setDataSource(this@MainActivity, uri)
+                setVolume(audioProcessor.bgVolume, audioProcessor.bgVolume)
+                isLooping = audioProcessor.isLooping
+                setOnCompletionListener {
+                    isLocalPreviewing = false
+                    btnPreviewAudio.text = "🎧 Preview on Phone"
+                }
+                prepare()
+                start()
+            }
+            isLocalPreviewing = true
+            btnPreviewAudio.text = "⏹ Stop Preview"
+        } catch (e: Exception) {
+            Log.e(TAG, "startLocalPreview failed", e)
+            Toast.makeText(this, "Preview failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun stopLocalPreview() {
+        try {
+            previewPlayer?.stop()
+            previewPlayer?.release()
+            previewPlayer = null
+        } catch (e: Exception) {}
+        isLocalPreviewing = false
+        btnPreviewAudio.text = "🎧 Preview on Phone"
+    }
+
+    private fun startDeviceMonitor() {
+        val uri = selectedAudioUri ?: return
+        try {
+            if (previewPlayer == null) {
+                previewPlayer = MediaPlayer().apply {
+                    setDataSource(this@MainActivity, uri)
+                    setVolume(audioProcessor.bgVolume, audioProcessor.bgVolume)
+                    isLooping = audioProcessor.isLooping
+                    prepare()
+                }
+            }
+            previewPlayer?.setVolume(audioProcessor.bgVolume, audioProcessor.bgVolume)
+            previewPlayer?.start()
+        } catch (e: Exception) {
+            Log.w(TAG, "Device monitor play failed", e)
+        }
+    }
+
+    private fun pauseDeviceMonitor() {
+        try {
+            previewPlayer?.pause()
+        } catch (e: Exception) {}
+    }
+
+    private fun stopDeviceMonitor() {
+        try {
+            previewPlayer?.stop()
+            previewPlayer?.release()
+            previewPlayer = null
+        } catch (e: Exception) {}
     }
 
     private fun allPermissionsGranted(): Boolean {
@@ -775,7 +961,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
     }
 
-    private fun updateStatsDisplay() {
+    private fun updateStatsDisplay(customText: String? = null) {
         val aspect = streamConfig.selectedAspectRatio
         val src = when (currentSource) {
             ActiveSource.OTG -> "OTG"
@@ -783,7 +969,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             ActiveSource.FRONT -> "Front"
         }
         val res = "${streamConfig.videoWidth}x${streamConfig.videoHeight} ($aspect $src)"
-        tvStreamStats.text = "1000 kbps | 30 fps | $res"
+        val text = customText ?: "1000 kbps | 30 fps | $res"
+        if (::tvStreamStatsPortrait.isInitialized) {
+            tvStreamStatsPortrait.text = text
+        }
+        if (::tvStreamStatsLandscape.isInitialized) {
+            tvStreamStatsLandscape.text = text
+        }
     }
 
     private fun checkUsbConnectedInitially() {
@@ -1010,7 +1202,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             val displayKbps = if (smoothedKbps > 0) smoothedKbps else currentKbps
             val aspect = streamConfig.selectedAspectRatio
             val res = "${streamConfig.videoWidth}x${streamConfig.videoHeight} ($aspect)"
-            tvStreamStats.text = "$displayKbps kbps | 30 fps | $res"
+            updateStatsDisplay("$displayKbps kbps | 30 fps | $res")
         }
     }
 
@@ -1068,6 +1260,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         super.onConfigurationChanged(newConfig)
         Log.d(TAG, "Device orientation changed: ${newConfig.orientation}")
         updateOrientationHint(newConfig.orientation)
+        updateHeaderOrientation(newConfig.orientation)
         textureView.post {
             adjustAspectRatio(textureView.width, textureView.height)
             try {
@@ -1080,6 +1273,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
     override fun onResume() {
         super.onResume()
+        audioProgressHandler.post(audioProgressRunnable)
         if (allPermissionsGranted() && genericStream != null && !genericStream!!.isOnPreview && !isStreaming) {
             if (textureView.isAvailable) {
                 try {
@@ -1093,6 +1287,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
     override fun onPause() {
         super.onPause()
+        audioProgressHandler.removeCallbacks(audioProgressRunnable)
         if (!isStreaming && genericStream?.isOnPreview == true) {
             try {
                 genericStream?.stopPreview()
@@ -1104,6 +1299,8 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopLocalPreview()
+        audioProgressHandler.removeCallbacks(audioProgressRunnable)
         try {
             unregisterReceiver(usbReceiver)
         } catch (e: Exception) {}
