@@ -1038,7 +1038,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 val videoPrepared = stream.prepareVideo(
                     streamConfig.videoWidth,
                     streamConfig.videoHeight,
-                    StreamConfig.DEFAULT_BITRATE,
+                    streamConfig.videoBitrate,
                     StreamConfig.DEFAULT_FPS,
                     2,
                     0
@@ -1140,7 +1140,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 val videoPrepared = stream.prepareVideo(
                     streamConfig.videoWidth,
                     streamConfig.videoHeight,
-                    StreamConfig.DEFAULT_BITRATE,
+                    streamConfig.videoBitrate,
                     StreamConfig.DEFAULT_FPS,
                     2,
                     0
@@ -1534,6 +1534,28 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         btnRatio9x16.setOnClickListener { tempRatio = "9:16"; updateRatioUI() }
         btnRatio4x3.setOnClickListener { tempRatio = "4:3"; updateRatioUI() }
 
+        // Video Bitrate Selector
+        val btnBitrate100k = dialogView.findViewById<Button>(R.id.btnBitrate100k)
+        val btnBitrate500k = dialogView.findViewById<Button>(R.id.btnBitrate500k)
+        val btnBitrate1000k = dialogView.findViewById<Button>(R.id.btnBitrate1000k)
+        val btnBitrate2500k = dialogView.findViewById<Button>(R.id.btnBitrate2500k)
+        var tempBitrate = streamConfig.videoBitrate
+
+        fun updateBitrateUI() {
+            val activeColor = ContextCompat.getColor(this, R.color.accent_blue)
+            val normalColor = ContextCompat.getColor(this, R.color.surface_card)
+            btnBitrate100k?.setBackgroundColor(if (tempBitrate <= 150_000) activeColor else normalColor)
+            btnBitrate500k?.setBackgroundColor(if (tempBitrate in 150_001..750_000) activeColor else normalColor)
+            btnBitrate1000k?.setBackgroundColor(if (tempBitrate in 750_001..1_500_000) activeColor else normalColor)
+            btnBitrate2500k?.setBackgroundColor(if (tempBitrate > 1_500_000) activeColor else normalColor)
+        }
+        updateBitrateUI()
+
+        btnBitrate100k?.setOnClickListener { tempBitrate = StreamConfig.BITRATE_100K; updateBitrateUI() }
+        btnBitrate500k?.setOnClickListener { tempBitrate = StreamConfig.BITRATE_500K; updateBitrateUI() }
+        btnBitrate1000k?.setOnClickListener { tempBitrate = StreamConfig.BITRATE_1000K; updateBitrateUI() }
+        btnBitrate2500k?.setOnClickListener { tempBitrate = StreamConfig.BITRATE_2500K; updateBitrateUI() }
+
         // BondStream UI Binding
         val switchBonding = dialogView.findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchBonding)
         val etBondingHost = dialogView.findViewById<EditText>(R.id.etBondingHost)
@@ -1604,21 +1626,24 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             streamConfig.bondingAuthToken = etBondingAuthToken?.text?.toString()?.trim() ?: ""
             streamConfig.isAutoFallbackEnabled = switchAutoFallback?.isChecked ?: true
             val ratioChanged = streamConfig.selectedAspectRatio != tempRatio
+            val bitrateChanged = streamConfig.videoBitrate != tempBitrate
             streamConfig.selectedAspectRatio = tempRatio
+            streamConfig.videoBitrate = tempBitrate
 
-            if (ratioChanged && !isStreaming) {
+            if ((ratioChanged || bitrateChanged) && !isStreaming) {
                 try {
                     genericStream?.let { s ->
                         if (s.isOnPreview) s.stopPreview()
                         prepareAndStartPreview()
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Re-init on ratio change failed", e)
+                    Log.e(TAG, "Re-init on settings change failed", e)
                 }
             }
             updateStatsDisplay()
             updateNetworkStatusPreview()
-            Toast.makeText(this, "Settings saved (Aspect: $tempRatio)", Toast.LENGTH_SHORT).show()
+            val kbps = tempBitrate / 1000
+            Toast.makeText(this, "Settings saved (Aspect: $tempRatio, Bitrate: ${kbps}k)", Toast.LENGTH_SHORT).show()
             dialog.dismiss()
         }
 

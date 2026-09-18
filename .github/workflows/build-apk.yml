@@ -50,42 +50,44 @@ jobs:
       - name: Rename APK for Easy Identification
         run: |
           mkdir -p release-artifacts
-          cp android/app/build/outputs/apk/debug/*.apk release-artifacts/StreamEzy-Capture-v2.0-BondStream.apk
+          cp android/app/build/outputs/apk/debug/*.apk release-artifacts/StreamEzy-Capture-v3.0-LiveU-Bonded.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: StreamEzy-Capture-v2.0-BondStream.apk
-          path: release-artifacts/StreamEzy-Capture-v2.0-BondStream.apk
+          name: StreamEzy-Capture-v3.0-LiveU-Bonded.apk
+          path: release-artifacts/StreamEzy-Capture-v3.0-LiveU-Bonded.apk
           if-no-files-found: error
 
       - name: Publish GitHub Release with APK
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v2.0.0-bondstream
-          name: "StreamEzy Capture v2.0.0 — Multi-Network Cellular Bonding Edition"
+          tag_name: v3.0.0-liveu
+          name: "StreamEzy Capture v3.0.0 — LiveU-Style Video Bonding & Low-Bandwidth Edition"
           body: |
-            ## 🚀 StreamEzy Capture v2.0.0 — BondStream Edition
-            
+            ## 🚀 StreamEzy Capture v3.0.0 — LiveU-Style Video Bonding Edition
+
             Compiled automatically via GitHub Actions CI/CD.
-            
-            ### 🌟 New in v2.0.0 (Cellular Bonding System):
-            - **Speedify-Style Multi-Path Cellular Bonding**: Combine Wi-Fi + Cellular (SIM 1 / SIM 2) simultaneously for aggregate bandwidth and zero-drop live streaming.
-            - **In-App Multi-Path Benchmark Mode**: 5-second connection health & throughput test directly from the app settings.
-            - **Live On-Screen Bonding HUD Overlay**: Real-time combined bitrate, latency, packet loss, and active network interfaces (`Wi-Fi ● SIM 1 ●`).
-            - **Automatic Fallback Protection**: Seamlessly falls back to direct RTMP if multi-path bonding experiences an auth failure or server timeout.
-            - **Replay Attack & Stream Key Auth Security**: Cryptographic token validation with `AUTH_FAIL` defense.
-            
+
+            ### 🌟 New in v3.0.0 (LiveU Bonding & Broadcast Enhancement):
+            - **LiveU-Style Forward Error Correction (FEC)**: XOR-based 0-RTT packet recovery across multiple paths.
+            - **Selective NACK & Hybrid ARQ**: Fast retransmission for missing packets before playout buffer deadline.
+            - **Multi-Path Bonding Engine**: Intelligent round-robin and latency-aware scheduling across Wi-Fi + Cellular (SIM 1 / SIM 2).
+            - **Ultra-Low Bandwidth Field Transmission (100 kbps)**: Broadcast smoothly even in congested rural/weak signal areas with VPS cloud broadcast enhancement.
+            - **In-App Bitrate Selector (100k / 500k / 1000k / 2500k)**: Easily switch between ultra-low bandwidth uplink and standard HD streaming.
+            - **Network Center HUD**: Real-time interface health, latency, packet loss, and live bandwidth breakdown.
+            - **Auto-Failover & Reconnect**: Seamlessly switches between paths and direct RTMP fallback without interrupting the stream.
+
             ### 🎥 Core Features Retained:
             - **Triple-Switch Live Dock**: Front Camera, Rear Camera, and OTG HDMI Video Capture Card (`UVCAndroid`).
-            - **Locked 30 FPS & 1000 kbps** hardware H.264 / AAC RTMP output.
+            - **Locked 30 FPS** hardware H.264 / AAC RTMP output.
             - **16:9 Landscape & 9:16 Portrait Shorts** mode switcher.
             - **Audio VU Meter** & background audio controls.
-            
+
             ### 📥 Installation:
-            Download and install `StreamEzy-Capture-v2.0-BondStream.apk` onto your Android phone and grant Camera/Audio/USB permissions when prompted.
-          files: release-artifacts/StreamEzy-Capture-v2.0-BondStream.apk
+            Download and install `StreamEzy-Capture-v3.0-LiveU-Bonded.apk` onto your Android phone and grant Camera/Audio/USB permissions when prompted.
+          files: release-artifacts/StreamEzy-Capture-v3.0-LiveU-Bonded.apk
           draft: false
           prerelease: false
         env:

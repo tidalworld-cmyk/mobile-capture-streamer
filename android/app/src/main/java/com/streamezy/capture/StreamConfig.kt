@@ -18,10 +18,18 @@ class StreamConfig(context: Context) {
         const val STANDARD_WIDTH = 960
         const val STANDARD_HEIGHT = 720
         const val DEFAULT_BITRATE = 1000 * 1000 // 1000 kbps (1 Mbps)
+        const val BITRATE_100K = 100 * 1000 // 100 kbps (LiveU field low-bandwidth uplink)
+        const val BITRATE_500K = 500 * 1000 // 500 kbps
+        const val BITRATE_1000K = 1000 * 1000 // 1000 kbps
+        const val BITRATE_2500K = 2500 * 1000 // 2500 kbps
         const val DEFAULT_FPS = 30
         const val DEFAULT_SAMPLE_RATE = 44100
         const val DEFAULT_AUDIO_BITRATE = 128 * 1000 // 128 kbps
     }
+
+    var videoBitrate: Int
+        get() = prefs.getInt("video_bitrate", DEFAULT_BITRATE)
+        set(value) = prefs.edit().putInt("video_bitrate", value).apply()
 
     var selectedAspectRatio: String
         get() = "16:9"
