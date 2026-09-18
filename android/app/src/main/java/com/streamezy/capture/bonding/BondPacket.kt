@@ -22,6 +22,7 @@ enum class PacketType(val value: Byte) {
 }
 
 object PacketFlags {
+    const val NONE: Byte = 0
     const val RETRANSMITTED: Byte = 0x01
     const val FEC_PARITY: Byte = 0x02
     const val KEYFRAME: Byte = 0x04
