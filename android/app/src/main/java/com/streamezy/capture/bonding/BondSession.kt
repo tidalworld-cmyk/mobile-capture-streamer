@@ -25,6 +25,7 @@ data class BondMetrics(
     val packetLossPct: Double,
     val retransmissionsRepaired: Long,
     val redundantPacketsSent: Long,
+    val fecPacketsSent: Long,
     val playoutDelayMs: Double,
     val isZeroLoss: Boolean,
     val paths: List<NetworkPath>
@@ -37,7 +38,9 @@ class BondSession(
     var authToken: String = "",
     var playoutDelayMs: Double = 1000.0,
     var enableArq: Boolean = true,
-    var enableRedundancy: Boolean = true
+    var enableRedundancy: Boolean = true,
+    var enableFec: Boolean = true,
+    var fecBlockSize: Int = 8
 ) {
     companion object {
         private const val TAG = "BondSession"
@@ -57,6 +60,11 @@ class BondSession(
     private val ringOrder = java.util.concurrent.ConcurrentLinkedDeque<Long>()
     val retransmissionsRepaired = AtomicLong(0L)
     val redundantPacketsSent = AtomicLong(0L)
+    val fecPacketsSent = AtomicLong(0L)
+
+    // Forward Error Correction (FEC) Parity Block Buffer
+    private val fecBuffer = java.util.ArrayList<Pair<Long, ByteArray>>()
+    private val fecLock = Any()
 
     var mode: BondingMode = BondingMode.OFF
 
@@ -132,6 +140,7 @@ class BondSession(
                         packetLossPct = loss,
                         retransmissionsRepaired = repaired,
                         redundantPacketsSent = redundantPacketsSent.get(),
+                        fecPacketsSent = fecPacketsSent.get(),
                         playoutDelayMs = playoutDelayMs,
                         isZeroLoss = loss <= 0.1 || repaired > 0,
                         paths = paths
@@ -260,6 +269,39 @@ class BondSession(
                 if (secondary.sendPacket(dupPkt)) {
                     redundantPacketsSent.incrementAndGet()
                     Log.d(TAG, "Proactively duplicated critical header seq=$seq over ${secondary.path.name}")
+                }
+            }
+        }
+
+        // LiveU Forward Error Correction (FEC) Parity Packets
+        if (success && enableFec) {
+            var fecToSend: Pair<BondPathClient, BondPacket>? = null
+            synchronized(fecLock) {
+                fecBuffer.add(Pair(seq, payload))
+                if (fecBuffer.size >= fecBlockSize) {
+                    val baseSeq = fecBuffer[0].first
+                    val payloads = fecBuffer.map { it.second }
+                    val fecPayload = BondPacket.encodeFecPayload(baseSeq, fecBuffer.size, payloads)
+                    val onlineClients = pathClients.values.filter { it.path.status == PathStatus.ONLINE }
+                    if (onlineClients.isNotEmpty()) {
+                        val alt = onlineClients.filter { it.path.pathId != selectedPath.pathId }
+                        val fecClient = alt.firstOrNull() ?: onlineClients.first()
+                        val fecPkt = BondPacket(
+                            packetType = PacketType.DATA,
+                            pathId = fecClient.path.pathId,
+                            sessionId = sessionId,
+                            sequence = seq,
+                            flags = PacketFlags.FEC_PARITY,
+                            payload = fecPayload
+                        )
+                        fecToSend = Pair(fecClient, fecPkt)
+                    }
+                    fecBuffer.clear()
+                }
+            }
+            fecToSend?.let { (fc, fp) ->
+                if (fc.sendPacket(fp)) {
+                    fecPacketsSent.incrementAndGet()
                 }
             }
         }

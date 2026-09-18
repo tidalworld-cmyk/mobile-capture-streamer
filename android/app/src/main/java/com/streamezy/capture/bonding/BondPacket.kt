@@ -123,6 +123,38 @@ class BondPacket(
             }
             return seqs
         }
+
+        fun encodeFecPayload(baseSeq: Long, blockSize: Int, payloads: List<ByteArray>): ByteArray {
+            if (payloads.isEmpty()) return ByteArray(0)
+            val maxLen = payloads.maxOf { it.size }
+            var lengthsXor = 0
+            for (p in payloads) {
+                lengthsXor = lengthsXor xor p.size
+            }
+            val parity = ByteArray(maxLen)
+            for (p in payloads) {
+                for (i in p.indices) {
+                    parity[i] = (parity[i].toInt() xor p[i].toInt()).toByte()
+                }
+            }
+            val buf = ByteBuffer.allocate(12 + maxLen).order(ByteOrder.BIG_ENDIAN)
+            buf.putLong(baseSeq)
+            buf.putShort(blockSize.toShort())
+            buf.putShort(lengthsXor.toShort())
+            buf.put(parity)
+            return buf.array()
+        }
+
+        fun decodeFecPayload(payload: ByteArray): Triple<Long, Int, ByteArray> {
+            if (payload.size < 12) throw IllegalArgumentException("FEC payload too short (min 12 bytes)")
+            val buf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
+            val baseSeq = buf.long
+            val blockSize = buf.short.toInt() and 0xFFFF
+            val lengthsXor = buf.short.toInt() and 0xFFFF
+            val parity = ByteArray(payload.size - 12)
+            buf.get(parity)
+            return Triple(baseSeq, blockSize, parity)
+        }
     }
 
     fun serialize(): ByteArray {

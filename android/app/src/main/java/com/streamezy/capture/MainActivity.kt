@@ -1183,7 +1183,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                     token,
                     streamConfig.playoutDelayMs,
                     streamConfig.enableArq,
-                    streamConfig.enableRedundancy
+                    streamConfig.enableRedundancy,
+                    streamConfig.enableFec,
+                    streamConfig.fecBlockSize
                 ).apply {
                     mode = com.streamezy.capture.bonding.BondingMode.ON
                     onMetricsUpdated = { metrics ->
@@ -1257,8 +1259,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
         val sentMb = metrics.totalBytesSent / (1024.0 * 1024.0)
         val arqRepaired = metrics.retransmissionsRepaired
-        tvBondingMetrics.text = String.format("Avail: %.1f Mbps | Usage: %.1f Mbps | Sent: %.1f MB | %dms | ARQ: %d (Zero Loss)",
-            metrics.totalAvailableBandwidthMbps, metrics.totalUsageMbps, sentMb, metrics.averageLatencyMs, arqRepaired)
+        val fecSent = metrics.fecPacketsSent
+        tvBondingMetrics.text = String.format("Avail: %.1f Mbps | Usage: %.1f Mbps | Sent: %.1f MB | %dms | ARQ: %d | FEC: %d (Zero Loss)",
+            metrics.totalAvailableBandwidthMbps, metrics.totalUsageMbps, sentMb, metrics.averageLatencyMs, arqRepaired, fecSent)
     }
 
     private fun updateNetworkStatusPreview() {
@@ -1677,11 +1680,12 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             val avgJitter = if (onlineCount > 0) onlinePaths.map { it.jitterMs }.average().toLong() else 0L
             val lossPct = if (onlineCount > 0) onlinePaths.map { it.lossRate }.average() else 0.0
             val arqRepaired = bondSession?.retransmissionsRepaired?.get() ?: 0L
+            val fecSent = bondSession?.fecPacketsSent?.get() ?: 0L
             val playout = (bondSession?.playoutDelayMs ?: streamConfig.playoutDelayMs).toInt()
 
             tvCenterBandwidth.text = String.format("Total Avail: %.1f Mbps | Live TX Usage: %.1f Mbps", totalAvail, totalUsage)
-            tvCenterSentLoss.text = String.format("Sent: %.1f MB | %dms RTT (%dms jit) | ARQ: %d (Zero Loss) | LiveU 🛡️ %dms", 
-                totalSentMb, avgLatency, avgJitter, arqRepaired, playout)
+            tvCenterSentLoss.text = String.format("Sent: %.1f MB | %dms RTT (%dms jit) | ARQ: %d | FEC: %d (Zero Loss) | LiveU 🛡️ %dms", 
+                totalSentMb, avgLatency, avgJitter, arqRepaired, fecSent, playout)
 
             for (p in paths) {
                 val cardView = LayoutInflater.from(this).inflate(R.layout.item_network_card, layoutNetworkCards, false)

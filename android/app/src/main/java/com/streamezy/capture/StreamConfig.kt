@@ -89,6 +89,14 @@ class StreamConfig(context: Context) {
         get() = prefs.getBoolean("bonding_enable_redundancy", true)
         set(value) = prefs.edit().putBoolean("bonding_enable_redundancy", value).apply()
 
+    var enableFec: Boolean
+        get() = prefs.getBoolean("bonding_enable_fec", true)
+        set(value) = prefs.edit().putBoolean("bonding_enable_fec", value).apply()
+
+    var fecBlockSize: Int
+        get() = prefs.getInt("bonding_fec_block_size", 8)
+        set(value) = prefs.edit().putInt("bonding_fec_block_size", value).apply()
+
     val fullStreamEndpoint: String
         get() {
             val base = rtmpUrl.removeSuffix("/")
