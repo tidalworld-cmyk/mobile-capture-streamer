@@ -13,11 +13,19 @@ enum class PacketType(val value: Byte) {
     PROBE(6),
     PROBE_ACK(7),
     DOWNLINK(8),
-    AUTH_FAIL(9);
+    AUTH_FAIL(9),
+    NACK(10);
 
     companion object {
         fun fromByte(b: Byte): PacketType = values().firstOrNull { it.value == b } ?: DATA
     }
+}
+
+object PacketFlags {
+    const val RETRANSMITTED: Byte = 0x01
+    const val FEC_PARITY: Byte = 0x02
+    const val KEYFRAME: Byte = 0x04
+    const val REDUNDANT: Byte = 0x08
 }
 
 class BondPacket(
@@ -89,6 +97,31 @@ class BondPacket(
                 flags = flags,
                 payload = payload
             )
+        }
+
+        fun encodeNackPayload(missingSeqs: List<Long>): ByteArray {
+            val count = missingSeqs.size.coerceAtMost(100)
+            val buf = ByteBuffer.allocate(2 + count * 8).order(ByteOrder.BIG_ENDIAN)
+            buf.putShort(count.toShort())
+            for (i in 0 until count) {
+                buf.putLong(missingSeqs[i])
+            }
+            return buf.array()
+        }
+
+        fun decodeNackPayload(payload: ByteArray): List<Long> {
+            if (payload.size < 2) return emptyList()
+            val buf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
+            val count = buf.short.toInt() and 0xFFFF
+            val seqs = mutableListOf<Long>()
+            for (i in 0 until count) {
+                if (buf.remaining() >= 8) {
+                    seqs.add(buf.long)
+                } else {
+                    break
+                }
+            }
+            return seqs
         }
     }
 

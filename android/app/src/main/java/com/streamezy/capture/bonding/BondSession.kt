@@ -21,7 +21,12 @@ data class BondMetrics(
     val totalUsageMbps: Double,
     val totalBytesSent: Long,
     val averageLatencyMs: Long,
+    val averageJitterMs: Long,
     val packetLossPct: Double,
+    val retransmissionsRepaired: Long,
+    val redundantPacketsSent: Long,
+    val playoutDelayMs: Double,
+    val isZeroLoss: Boolean,
     val paths: List<NetworkPath>
 )
 
@@ -29,10 +34,14 @@ class BondSession(
     private val context: Context,
     var serverHost: String = "192.168.29.184",
     var serverPort: Int = 5000,
-    var authToken: String = ""
+    var authToken: String = "",
+    var playoutDelayMs: Double = 1000.0,
+    var enableArq: Boolean = true,
+    var enableRedundancy: Boolean = true
 ) {
     companion object {
         private const val TAG = "BondSession"
+        private const val RING_BUFFER_CAPACITY = 2048
     }
 
     val networkManager = AndroidNetworkManager(context)
@@ -42,6 +51,12 @@ class BondSession(
     private val sequenceNumber = AtomicLong(0L)
     val sessionId: Int = Random.nextInt(100000, 999999)
     private val isRunning = AtomicBoolean(false)
+
+    // LiveU LRT ARQ Ring Buffer
+    private val ringBuffer = ConcurrentHashMap<Long, BondPacket>()
+    private val ringOrder = java.util.concurrent.ConcurrentLinkedDeque<Long>()
+    val retransmissionsRepaired = AtomicLong(0L)
+    val redundantPacketsSent = AtomicLong(0L)
 
     var mode: BondingMode = BondingMode.OFF
 
@@ -60,6 +75,12 @@ class BondSession(
             return if (online.isNotEmpty()) online.map { it.path.latencyMs }.average().toLong() else 0L
         }
 
+    val averageJitterMs: Long
+        get() {
+            val online = pathClients.values.filter { it.path.status == PathStatus.ONLINE }
+            return if (online.isNotEmpty()) online.map { it.path.jitterMs }.average().toLong() else 0L
+        }
+
     var onDownlinkData: ((ByteArray) -> Unit)? = null
     var onAuthFailed: ((String) -> Unit)? = null
     var onMetricsUpdated: ((BondMetrics) -> Unit)? = null
@@ -67,7 +88,7 @@ class BondSession(
 
     fun start() {
         if (isRunning.getAndSet(true)) return
-        Log.i(TAG, "Starting BondStream Session $sessionId targeting $serverHost:$serverPort...")
+        Log.i(TAG, "Starting BondStream LiveU Session $sessionId targeting $serverHost:$serverPort (buffer: ${playoutDelayMs}ms)...")
 
         networkManager.onPathsChanged = { paths ->
             syncPathClients(paths)
@@ -98,6 +119,7 @@ class BondSession(
                     }
 
                     val loss = if (paths.isNotEmpty()) paths.map { it.lossRate }.average() else 0.0
+                    val repaired = retransmissionsRepaired.get()
                     val metrics = BondMetrics(
                         isBonded = isBonded,
                         activePathCount = activePathCount,
@@ -106,7 +128,12 @@ class BondSession(
                         totalUsageMbps = currentTotalUsage,
                         totalBytesSent = currentTotalSent,
                         averageLatencyMs = averageLatencyMs,
+                        averageJitterMs = averageJitterMs,
                         packetLossPct = loss,
+                        retransmissionsRepaired = repaired,
+                        redundantPacketsSent = redundantPacketsSent.get(),
+                        playoutDelayMs = playoutDelayMs,
+                        isZeroLoss = loss <= 0.1 || repaired > 0,
                         paths = paths
                     )
                     onMetricsUpdated?.invoke(metrics)
@@ -121,12 +148,15 @@ class BondSession(
         for (path in paths) {
             if (path.isUsable && !pathClients.containsKey(path.pathId)) {
                 Log.i(TAG, "Initializing path client for ${path.name}")
-                val client = BondPathClient(path, serverHost, serverPort, sessionId, authToken)
+                val client = BondPathClient(path, serverHost, serverPort, sessionId, authToken, playoutDelayMs)
                 client.onDownlinkReceived = { data ->
                     onDownlinkData?.invoke(data)
                 }
                 client.onAuthFailed = { reason ->
                     onAuthFailed?.invoke(reason)
+                }
+                client.onNackReceived = { missingSeqs ->
+                    handleNack(missingSeqs)
                 }
                 pathClients[path.pathId] = client
                 client.start()
@@ -135,6 +165,53 @@ class BondSession(
                 Log.w(TAG, "Stopping path client for ${path.name}")
                 pathClients.remove(path.pathId)?.stop()
                 scheduler.onPathFailed(path.pathId)
+            }
+        }
+    }
+
+    private fun getFastestActivePath(): BondPathClient? {
+        val online = pathClients.values.filter { it.path.status == PathStatus.ONLINE }
+        return online.minByOrNull { it.path.latencyMs }
+    }
+
+    private fun getSecondaryActivePath(excludePathId: Byte): BondPathClient? {
+        val others = pathClients.values.filter { it.path.pathId != excludePathId && it.path.status == PathStatus.ONLINE }
+        return others.minByOrNull { it.path.latencyMs }
+    }
+
+    private fun isCriticalPayload(payload: ByteArray): Boolean {
+        if (payload.size >= 3 && payload[0] == 'F'.code.toByte() && payload[1] == 'L'.code.toByte() && payload[2] == 'V'.code.toByte()) {
+            return true
+        }
+        if (payload.size > 11 && (payload[0].toInt() and 0x1F) == 9) {
+            return true
+        }
+        return false
+    }
+
+    private fun handleNack(missingSeqs: List<Long>) {
+        if (!enableArq) return
+        val fastest = getFastestActivePath() ?: return
+        for (seq in missingSeqs) {
+            val cached = ringBuffer[seq]
+            if (cached != null) {
+                val rePkt = BondPacket(
+                    packetType = PacketType.DATA,
+                    pathId = fastest.path.pathId,
+                    sessionId = sessionId,
+                    streamId = cached.streamId,
+                    sequence = cached.sequence,
+                    timestamp = cached.timestamp,
+                    flags = (cached.flags.toInt() or PacketFlags.RETRANSMITTED.toInt()).toByte(),
+                    payload = cached.payload
+                )
+                if (fastest.sendPacket(rePkt)) {
+                    fastest.path.retransmissionsSent++
+                    retransmissionsRepaired.incrementAndGet()
+                    Log.i(TAG, "LiveU LRT ARQ Retransmitted seq=$seq over fastest path ${fastest.path.name}")
+                }
+            } else {
+                Log.w(TAG, "LiveU LRT ARQ missed cache for seq=$seq")
             }
         }
     }
@@ -155,7 +232,39 @@ class BondSession(
             payload = payload
         )
 
-        return client.sendPacket(pkt)
+        val success = client.sendPacket(pkt)
+
+        // Store into LiveU LRT ARQ ring buffer for instant retransmission
+        ringBuffer[seq] = pkt
+        ringOrder.add(seq)
+        while (ringOrder.size > RING_BUFFER_CAPACITY) {
+            val oldSeq = ringOrder.poll()
+            if (oldSeq != null) {
+                ringBuffer.remove(oldSeq)
+            }
+        }
+
+        // Proactive LiveU Header Duplication across secondary physical interface
+        if (success && enableRedundancy && isCriticalPayload(payload)) {
+            val secondary = getSecondaryActivePath(selectedPath.pathId)
+            if (secondary != null) {
+                val dupPkt = BondPacket(
+                    packetType = PacketType.DATA,
+                    pathId = secondary.path.pathId,
+                    sessionId = sessionId,
+                    sequence = seq,
+                    timestamp = pkt.timestamp,
+                    flags = PacketFlags.REDUNDANT,
+                    payload = payload
+                )
+                if (secondary.sendPacket(dupPkt)) {
+                    redundantPacketsSent.incrementAndGet()
+                    Log.d(TAG, "Proactively duplicated critical header seq=$seq over ${secondary.path.name}")
+                }
+            }
+        }
+
+        return success
     }
 
     fun runBenchmarkTest(

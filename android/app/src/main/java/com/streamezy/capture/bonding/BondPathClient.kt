@@ -12,7 +12,8 @@ class BondPathClient(
     private val serverHost: String,
     private val serverPort: Int,
     private val sessionId: Int,
-    private val authToken: String = ""
+    private val authToken: String = "",
+    private val playoutDelayMs: Double = 1000.0
 ) {
     companion object {
         private const val TAG = "BondPathClient"
@@ -26,6 +27,7 @@ class BondPathClient(
     private var heartbeatThread: Thread? = null
 
     var onPacketAcked: ((BondPacket) -> Unit)? = null
+    var onNackReceived: ((List<Long>) -> Unit)? = null
     var onDownlinkReceived: ((ByteArray) -> Unit)? = null
     var onAuthFailed: ((String) -> Unit)? = null
 
@@ -44,11 +46,11 @@ class BondPathClient(
 
             path.status = PathStatus.CONNECTING
 
-            // Send HELLO packet with authentication token if configured
+            // Send HELLO packet with authentication token and LiveU playout delay
             val helloPayload = if (authToken.isNotBlank()) {
-                "{\"token\":\"$authToken\",\"client_name\":\"Android-${path.name}\"}".toByteArray()
+                "{\"token\":\"$authToken\",\"client_name\":\"Android-${path.name}\",\"playout_delay_ms\":$playoutDelayMs}".toByteArray()
             } else {
-                "Android-${path.name}".toByteArray()
+                "{\"client_name\":\"Android-${path.name}\",\"playout_delay_ms\":$playoutDelayMs}".toByteArray()
             }
 
             sendPacket(
@@ -110,6 +112,12 @@ class BondPathClient(
                 } else if (bondPkt.packetType == PacketType.DOWNLINK) {
                     if (bondPkt.payload.isNotEmpty()) {
                         onDownlinkReceived?.invoke(bondPkt.payload)
+                    }
+                } else if (bondPkt.packetType == PacketType.NACK) {
+                    val missingSeqs = BondPacket.decodeNackPayload(bondPkt.payload)
+                    if (missingSeqs.isNotEmpty()) {
+                        Log.d(TAG, "Received NACK on ${path.name} for ${missingSeqs.size} missing packets: $missingSeqs")
+                        onNackReceived?.invoke(missingSeqs)
                     }
                 } else if (bondPkt.packetType == PacketType.AUTH_FAIL) {
                     val reason = String(bondPkt.payload)

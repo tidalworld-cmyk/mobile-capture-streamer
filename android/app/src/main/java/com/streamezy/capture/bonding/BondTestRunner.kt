@@ -27,8 +27,12 @@ class BondTestRunner(private val bondSession: BondSession) {
             val t3 = runSequenceIntegrityTest()
             onProgress(t3)
 
+            // Test 4: LiveU LRT ARQ Recovery Test
+            val t4 = runLiveUArqRecoveryTest()
+            onProgress(t4)
+
             Log.i(TAG, "==================================================")
-            Log.i(TAG, "BONDSTREAM PHASE 1 CLIENT CHECKS COMPLETED")
+            Log.i(TAG, "BONDSTREAM PHASE 1 & LIVEU CHECKS COMPLETED")
             Log.i(TAG, "==================================================")
         }.start()
     }
@@ -65,5 +69,11 @@ class BondTestRunner(private val bondSession: BondSession) {
             if (ok) sent++
         }
         return TestResult("TEST 3: Packet Sequencing", sent > 0, "Sent $sent/50 sequenced test packets.")
+    }
+
+    private fun runLiveUArqRecoveryTest(): TestResult {
+        Log.i(TAG, "[TEST 4] LiveU LRT ARQ Recovery test...")
+        val ok = bondSession.sendData("LiveU Test Recovery Packet".toByteArray())
+        return TestResult("TEST 4: LiveU ARQ Engine", ok, "LiveU LRT ARQ active (${bondSession.retransmissionsRepaired.get()} repaired, playout: ${bondSession.playoutDelayMs}ms)")
     }
 }

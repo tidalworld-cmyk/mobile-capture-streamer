@@ -77,6 +77,18 @@ class StreamConfig(context: Context) {
         get() = prefs.getBoolean("bonding_auto_fallback", true)
         set(value) = prefs.edit().putBoolean("bonding_auto_fallback", value).apply()
 
+    var playoutDelayMs: Double
+        get() = prefs.getFloat("bonding_playout_delay_ms", 1000.0f).toDouble()
+        set(value) = prefs.edit().putFloat("bonding_playout_delay_ms", value.toFloat()).apply()
+
+    var enableArq: Boolean
+        get() = prefs.getBoolean("bonding_enable_arq", true)
+        set(value) = prefs.edit().putBoolean("bonding_enable_arq", value).apply()
+
+    var enableRedundancy: Boolean
+        get() = prefs.getBoolean("bonding_enable_redundancy", true)
+        set(value) = prefs.edit().putBoolean("bonding_enable_redundancy", value).apply()
+
     val fullStreamEndpoint: String
         get() {
             val base = rtmpUrl.removeSuffix("/")

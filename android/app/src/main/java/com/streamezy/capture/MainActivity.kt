@@ -1180,7 +1180,10 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                     this,
                     streamConfig.bondingServerHost,
                     streamConfig.bondingServerPort,
-                    token
+                    token,
+                    streamConfig.playoutDelayMs,
+                    streamConfig.enableArq,
+                    streamConfig.enableRedundancy
                 ).apply {
                     mode = com.streamezy.capture.bonding.BondingMode.ON
                     onMetricsUpdated = { metrics ->
@@ -1209,7 +1212,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
                 val key = streamConfig.streamKey.trim().ifEmpty { "live" }
                 targetUrl = "rtmp://127.0.0.1:$proxyPort/live/$key"
-                Log.i(TAG, "RootEncoder routing via BondStream loopback proxy: $targetUrl")
+                Log.i(TAG, "RootEncoder routing via BondStream loopback proxy: $targetUrl (LiveU playout: ${streamConfig.playoutDelayMs}ms)")
             } else {
                 if (::headerRowBonding.isInitialized) {
                     headerRowBonding.visibility = View.GONE
@@ -1250,11 +1253,12 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
 
         val netSummary = onlinePaths.joinToString(" ") { "${it.name} ●" }
-        tvBondingNetworks.text = if (netSummary.isNotBlank()) "$count Connected: $netSummary" else "0 Connected"
+        tvBondingNetworks.text = if (netSummary.isNotBlank()) "[$count Networks Connected: $netSummary]" else "0 Connected"
 
         val sentMb = metrics.totalBytesSent / (1024.0 * 1024.0)
-        tvBondingMetrics.text = String.format("Avail: %.1f Mbps | Usage: %.1f Mbps | Sent: %.1f MB | %dms",
-            metrics.totalAvailableBandwidthMbps, metrics.totalUsageMbps, sentMb, metrics.averageLatencyMs)
+        val arqRepaired = metrics.retransmissionsRepaired
+        tvBondingMetrics.text = String.format("Avail: %.1f Mbps | Usage: %.1f Mbps | Sent: %.1f MB | %dms | ARQ: %d (Zero Loss)",
+            metrics.totalAvailableBandwidthMbps, metrics.totalUsageMbps, sentMb, metrics.averageLatencyMs, arqRepaired)
     }
 
     private fun updateNetworkStatusPreview() {
@@ -1670,10 +1674,14 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             val totalUsage = paths.sumOf { it.currentUsageMbps }
             val totalSentMb = paths.sumOf { it.bytesSent } / (1024.0 * 1024.0)
             val avgLatency = if (onlineCount > 0) onlinePaths.map { it.latencyMs }.average().toLong() else 0L
+            val avgJitter = if (onlineCount > 0) onlinePaths.map { it.jitterMs }.average().toLong() else 0L
             val lossPct = if (onlineCount > 0) onlinePaths.map { it.lossRate }.average() else 0.0
+            val arqRepaired = bondSession?.retransmissionsRepaired?.get() ?: 0L
+            val playout = (bondSession?.playoutDelayMs ?: streamConfig.playoutDelayMs).toInt()
 
-            tvCenterBandwidth.text = String.format("Total Avail: %.1f Mbps | Usage: %.1f Mbps", totalAvail, totalUsage)
-            tvCenterSentLoss.text = String.format("Sent: %.1f MB | %dms RTT | %.1f%% loss", totalSentMb, avgLatency, lossPct)
+            tvCenterBandwidth.text = String.format("Total Avail: %.1f Mbps | Live TX Usage: %.1f Mbps", totalAvail, totalUsage)
+            tvCenterSentLoss.text = String.format("Sent: %.1f MB | %dms RTT (%dms jit) | ARQ: %d (Zero Loss) | LiveU 🛡️ %dms", 
+                totalSentMb, avgLatency, avgJitter, arqRepaired, playout)
 
             for (p in paths) {
                 val cardView = LayoutInflater.from(this).inflate(R.layout.item_network_card, layoutNetworkCards, false)
@@ -1696,10 +1704,10 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 tvStatus.setBackgroundColor(ContextCompat.getColor(this, statusColor))
 
                 tvAvail.text = String.format("Avail: %.1f Mbps", p.availableBandwidthMbps)
-                tvUsage.text = String.format("Usage: %.1f Mbps", p.currentUsageMbps)
+                tvUsage.text = String.format("TX Usage: %.1f Mbps", p.currentUsageMbps)
                 val sentMb = p.bytesSent / (1024.0 * 1024.0)
-                tvSent.text = String.format("Sent: %.1f MB (%d pkts)", sentMb, p.packetsSent)
-                tvLatencyLoss.text = String.format("%dms RTT | %.1f%% loss", p.latencyMs, p.lossRate)
+                tvSent.text = String.format("Sent: %.1f MB (TX: %d | ACK: %d)", sentMb, p.packetsSent, p.packetsAcked)
+                tvLatencyLoss.text = String.format("%dms RTT (%dms jit) | %.1f%% loss", p.latencyMs, p.jitterMs, p.lossRate)
 
                 layoutNetworkCards.addView(cardView)
             }

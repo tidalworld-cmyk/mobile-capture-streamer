@@ -21,6 +21,16 @@ class BondScheduler {
             val rtt = path.latencyMs.coerceAtLeast(10L).toFloat()
             val loss = path.lossRate.coerceIn(0f, 0.9f)
             val speed = path.estimatedUploadMbps.coerceAtLeast(1.0).toFloat()
+            val jitterPenalty = 1.0f / (1.0f + (path.jitterMs.coerceAtLeast(0L).toFloat() / 25.0f))
+
+            // Transport bonus (Ethernet/Wi-Fi slight priority for stability)
+            val transportBonus = if (path.transportType.contains("ETHERNET", ignoreCase = true) || path.name.contains("LAN", ignoreCase = true)) {
+                1.25f
+            } else if (path.transportType.contains("WIFI", ignoreCase = true) || path.name.contains("Wi-Fi", ignoreCase = true)) {
+                1.10f
+            } else {
+                1.0f
+            }
 
             // Smooth recovery multiplier
             var ramp = recoveryWeights[path.pathId] ?: 1.0f
@@ -29,9 +39,9 @@ class BondScheduler {
                 recoveryWeights[path.pathId] = ramp
             }
 
-            // Quality score: higher bandwidth, lower latency, lower loss = higher score
-            val qualityScore = (speed / rtt) * (1.0f - loss) * (1.0f - loss) * ramp
-            val tickets = (qualityScore * 10).toInt().coerceIn(1, 100)
+            // LiveU DRC Quality score: higher bandwidth, lower latency, lower loss, lower jitter = higher score
+            val qualityScore = (speed / rtt) * (1.0f - loss) * (1.0f - loss) * jitterPenalty * ramp * transportBonus
+            val tickets = (qualityScore * 12).toInt().coerceIn(1, 100)
 
             repeat(tickets) {
                 weightedList.add(path)

@@ -1,6 +1,7 @@
 package com.streamezy.capture.bonding
 
 import android.net.Network
+import kotlin.math.abs
 
 enum class PathStatus {
     DISCONNECTED,
@@ -18,6 +19,7 @@ data class NetworkPath(
     var network: Network? = null,
     var status: PathStatus = PathStatus.DISCONNECTED,
     var latencyMs: Long = 0L,
+    var jitterMs: Long = 0L,
     var lossRate: Float = 0f,
     var estimatedUploadMbps: Double = 0.0,
     var lastHeartbeatTimestamp: Long = 0L,
@@ -25,6 +27,7 @@ data class NetworkPath(
     var bytesSent: Long = 0L,
     var packetsAcked: Long = 0L,
     var packetsLost: Long = 0L,
+    var retransmissionsSent: Long = 0L,
     var availableBandwidthMbps: Double = 0.0,
     var currentUsageMbps: Double = 0.0,
     var lastBytesSent: Long = 0L
@@ -33,7 +36,14 @@ data class NetworkPath(
         get() = status == PathStatus.ONLINE && network != null
 
     fun updateMetrics(newLatency: Long, loss: Float, mbps: Double) {
-        latencyMs = if (latencyMs == 0L) newLatency else ((latencyMs * 0.8) + (newLatency * 0.2)).toLong()
+        if (latencyMs > 0L) {
+            val sampleJitter = abs(newLatency - latencyMs)
+            jitterMs = ((jitterMs * 0.8) + (sampleJitter * 0.2)).toLong()
+            latencyMs = ((latencyMs * 0.8) + (newLatency * 0.2)).toLong()
+        } else {
+            latencyMs = newLatency
+            jitterMs = 0L
+        }
         lossRate = loss
         estimatedUploadMbps = mbps
         lastHeartbeatTimestamp = System.currentTimeMillis()
