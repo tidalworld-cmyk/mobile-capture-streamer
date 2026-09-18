@@ -12,25 +12,34 @@ import java.util.concurrent.atomic.AtomicLong
 class BondingTransport(
     val sessionId: Int,
     val streamId: Int = 1,
-    var pathClient: BondPathClient? = null
+    var pathClients: List<BondPathClient> = emptyList()
 ) {
     companion object {
         private const val TAG = "BondingTransport"
         const val MAX_PAYLOAD_SIZE = 1380 // Safe MTU preventing IP fragmentation
     }
 
+    var pathClient: BondPathClient?
+        get() = pathClients.firstOrNull()
+        set(value) {
+            pathClients = if (value != null) listOf(value) else emptyList()
+        }
+
     private val sequenceNumber = AtomicLong(0L)
+    private val pathIndex = java.util.concurrent.atomic.AtomicInteger(0)
     val packetsSent = AtomicLong(0L)
     val bytesSent = AtomicLong(0L)
     var isRunning = true
 
     /**
-     * Slices an incoming media chunk into safe MTU units and sends as BondingPackets.
+     * Slices an incoming media chunk into safe MTU units and distributes as BondingPackets
+     * across active network paths in round-robin sequence (Stage 3 Two-Path Bonding).
      * Returns the count of successfully transmitted packets.
      */
     fun sendMediaChunk(chunk: ByteArray, flags: Byte = PacketFlags.NONE): Int {
         if (!isRunning || chunk.isEmpty()) return 0
-        val client = pathClient ?: return 0
+        val onlineClients = pathClients.filter { it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.CONNECTING }
+        if (onlineClients.isEmpty()) return 0
 
         var sentCount = 0
         var offset = 0
@@ -43,6 +52,9 @@ class BondingTransport(
 
             val seq = sequenceNumber.getAndIncrement()
             val nowMs = System.currentTimeMillis()
+
+            val idx = Math.abs(pathIndex.getAndIncrement() % onlineClients.size)
+            val client = onlineClients[idx]
 
             val pkt = BondingPacket(
                 packetType = PacketType.DATA,
