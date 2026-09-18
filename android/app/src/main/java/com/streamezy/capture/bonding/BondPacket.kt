@@ -190,3 +190,6 @@ class BondPacket(
         return "BondPacket(type=$packetType, path=$pathId, session=$sessionId, seq=$sequence, len=${payload.size})"
     }
 }
+
+// Stage 2 Abstraction Alias
+typealias BondingPacket = BondPacket
