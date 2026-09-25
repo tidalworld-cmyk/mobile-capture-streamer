@@ -41,7 +41,7 @@ data class NetworkPath(
         get() = (lossRate * 100.0).toDouble()
 
     val isUsable: Boolean
-        get() = status == PathStatus.ONLINE && network != null && isInternetAvailable && isVpsReachable
+        get() = (status == PathStatus.ONLINE || status == PathStatus.RECOVERING) && network != null
 
     fun updateMetrics(newLatency: Long, loss: Float, mbps: Double) {
         if (latencyMs > 0L) {

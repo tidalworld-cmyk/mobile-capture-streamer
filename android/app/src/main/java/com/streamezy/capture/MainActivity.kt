@@ -1338,11 +1338,19 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
 
         // Line 2: SIM live TX metrics
-        if (simPath?.status == com.streamezy.capture.bonding.PathStatus.ONLINE) {
-            val carrier = if (simPath.carrierName.isNotBlank() && simPath.carrierName != "Carrier unavailable") simPath.carrierName else "Cellular"
-            tvBondingSimNetworks.text = String.format("SIM: %s ● TX: %.1f Mbps (%dms)", carrier, simPath.currentUsageMbps, simPath.latencyMs)
+        val simPaths = metrics.paths.filter { 
+            (it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM1 || 
+             it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM2) && 
+            it.status == com.streamezy.capture.bonding.PathStatus.ONLINE 
+        }
+        if (simPaths.isNotEmpty()) {
+            val simSummary = simPaths.joinToString(" + ") { p ->
+                val carrier = if (p.carrierName.isNotBlank() && p.carrierName != "Carrier unavailable") p.carrierName else "Cellular"
+                String.format("%s ● TX: %.1f Mbps (%dms)", carrier, p.currentUsageMbps, p.latencyMs)
+            }
+            tvBondingSimNetworks.text = "SIM networks: $simSummary"
         } else {
-            tvBondingSimNetworks.text = "SIM: Standby / No Data"
+            tvBondingSimNetworks.text = "SIM networks: Standby / No Data"
         }
 
         val sentMb = metrics.totalBytesSent / (1024.0 * 1024.0)
@@ -1397,18 +1405,24 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             }
 
             // Line 2: SIM network details
-            val activeSim = if (isSim1Online) sim1Path else if (isSim2Online) sim2Path else null
-            if (activeSim != null) {
-                val carrier = if (activeSim.carrierName.isNotBlank() && activeSim.carrierName != "Carrier unavailable") activeSim.carrierName else "Cellular"
+            val onlineSims = listOfNotNull(
+                if (isSim1Online) sim1Path else null,
+                if (isSim2Online) sim2Path else null
+            )
+            if (onlineSims.isNotEmpty()) {
                 val netType = netMgr.getNetworkTypeName()
-                tvBondingSimNetworks.text = String.format("SIM: %s (%s) ● Online (%.1f Mbps)", carrier, netType, activeSim.availableBandwidthMbps)
+                val simSummary = onlineSims.joinToString(" + ") { sim ->
+                    val carrier = if (sim.carrierName.isNotBlank() && sim.carrierName != "Carrier unavailable") sim.carrierName else "Cellular"
+                    String.format("%s (%s) ● Online (%.1f Mbps)", carrier, netType, sim.availableBandwidthMbps)
+                }
+                tvBondingSimNetworks.text = "SIM networks: $simSummary"
             } else {
                 val simCarrier = netMgr.getSimCarrierName(0)
                 if (simCarrier != "Carrier unavailable") {
                     val netType = netMgr.getNetworkTypeName()
-                    tvBondingSimNetworks.text = "SIM: $simCarrier ($netType) ● Standby / No Data"
+                    tvBondingSimNetworks.text = "SIM networks: $simCarrier ($netType) ● Standby / No Data"
                 } else {
-                    tvBondingSimNetworks.text = "SIM: Standby / No Data"
+                    tvBondingSimNetworks.text = "SIM networks: Standby / No Data"
                 }
             }
 

@@ -11,37 +11,43 @@ class BondScheduler {
 
     fun selectPath(paths: List<NetworkPath>): NetworkPath? {
         val usable = paths.filter { it.isUsable }
-        if (usable.isEmpty()) return null
+        if (usable.isEmpty()) {
+            // Zero-drop fallback: never stop broadcast if any network handle exists
+            val fallback = paths.filter { it.network != null && it.status != PathStatus.OFFLINE }
+            if (fallback.isNotEmpty()) return fallback[0]
+            return paths.firstOrNull { it.network != null }
+        }
         if (usable.size == 1) return usable[0]
 
-        // Calculate dynamic weights
+        // Calculate dynamic weights for combined bandwidth aggregation
         val weightedList = mutableListOf<NetworkPath>()
 
         for (path in usable) {
             val rtt = path.latencyMs.coerceAtLeast(10L).toFloat()
             val loss = path.lossRate.coerceIn(0f, 0.9f)
-            val speed = path.estimatedUploadMbps.coerceAtLeast(1.0).toFloat()
+            // Real bandwidth aggregation: Wi-Fi + SIM available bandwidth combined
+            val speed = (if (path.estimatedUploadMbps > 0) path.estimatedUploadMbps else path.availableBandwidthMbps).coerceAtLeast(1.0).toFloat()
             val jitterPenalty = 1.0f / (1.0f + (path.jitterMs.coerceAtLeast(0L).toFloat() / 25.0f))
 
-            // Transport bonus (Ethernet/Wi-Fi slight priority for stability)
+            // Transport bonus
             val transportBonus = if (path.transportType.contains("ETHERNET", ignoreCase = true) || path.name.contains("LAN", ignoreCase = true)) {
-                1.25f
+                1.20f
             } else if (path.transportType.contains("WIFI", ignoreCase = true) || path.name.contains("Wi-Fi", ignoreCase = true)) {
                 1.10f
             } else {
-                1.0f
+                1.05f
             }
 
-            // Smooth recovery multiplier
+            // Rapid recovery ramp-up to boost broadcast when SIM connects
             var ramp = recoveryWeights[path.pathId] ?: 1.0f
             if (ramp < 1.0f) {
-                ramp = (ramp + 0.05f).coerceAtMost(1.0f)
+                ramp = (ramp + 0.15f).coerceAtMost(1.0f)
                 recoveryWeights[path.pathId] = ramp
             }
 
-            // LiveU DRC Quality score: higher bandwidth, lower latency, lower loss, lower jitter = higher score
+            // LiveU LRT Quality score: higher combined bandwidth = higher proportional tickets
             val qualityScore = (speed / rtt) * (1.0f - loss) * (1.0f - loss) * jitterPenalty * ramp * transportBonus
-            val tickets = (qualityScore * 12).toInt().coerceIn(1, 100)
+            val tickets = (qualityScore * 10).toInt().coerceIn(1, 100)
 
             repeat(tickets) {
                 weightedList.add(path)
@@ -55,8 +61,8 @@ class BondScheduler {
     }
 
     fun onPathRecovered(pathId: Byte) {
-        // Start gradual traffic ramp-up from 15% capacity
-        recoveryWeights[pathId] = 0.15f
+        // Immediate boost: start at 50% capacity and ramp to 100% within moments
+        recoveryWeights[pathId] = 0.50f
     }
 
     fun onPathFailed(pathId: Byte) {

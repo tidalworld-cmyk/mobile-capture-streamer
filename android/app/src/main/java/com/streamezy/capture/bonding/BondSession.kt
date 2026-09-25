@@ -211,12 +211,12 @@ class BondSession(
     }
 
     private fun getFastestActivePath(): BondPathClient? {
-        val online = pathClients.values.filter { it.path.status == PathStatus.ONLINE }
+        val online = pathClients.values.filter { it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.RECOVERING }
         return online.minByOrNull { it.path.latencyMs }
     }
 
     private fun getSecondaryActivePath(excludePathId: Byte): BondPathClient? {
-        val others = pathClients.values.filter { it.path.pathId != excludePathId && it.path.status == PathStatus.ONLINE }
+        val others = pathClients.values.filter { it.path.pathId != excludePathId && (it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.RECOVERING) }
         return others.minByOrNull { it.path.latencyMs }
     }
 
@@ -265,19 +265,40 @@ class BondSession(
         if (!isRunning.get() || mode == BondingMode.OFF) return false
 
         val activePaths = pathClients.values.map { it.path }
-        val selectedPath = scheduler.selectPath(activePaths) ?: return false
-        val client = pathClients[selectedPath.pathId] ?: return false
+        val selectedPath = scheduler.selectPath(activePaths) ?: pathClients.values.firstOrNull()?.path ?: return false
+        val client = pathClients[selectedPath.pathId] ?: pathClients.values.firstOrNull() ?: return false
 
         val seq = sequenceNumber.getAndIncrement()
         val pkt = BondPacket(
             packetType = PacketType.DATA,
-            pathId = selectedPath.pathId,
+            pathId = client.path.pathId,
             sessionId = sessionId,
             sequence = seq,
             payload = payload
         )
 
-        val success = client.sendPacket(pkt)
+        var success = client.sendPacket(pkt)
+        if (!success) {
+            // Zero-drop failover: if primary path packet fails or drops to zero,
+            // immediately redirect to surviving alternative path so broadcast never stops
+            val survivingClient = pathClients.values.firstOrNull { 
+                it.path.pathId != client.path.pathId && (it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.RECOVERING || it.path.status == PathStatus.CONNECTING) && it.path.network != null
+            }
+            if (survivingClient != null) {
+                val failoverPkt = BondPacket(
+                    packetType = PacketType.DATA,
+                    pathId = survivingClient.path.pathId,
+                    sessionId = sessionId,
+                    sequence = seq,
+                    timestamp = pkt.timestamp,
+                    payload = payload
+                )
+                success = survivingClient.sendPacket(failoverPkt)
+                if (success) {
+                    Log.i(TAG, "Zero-drop failover succeeded: re-routed seq=$seq from ${client.path.name} to ${survivingClient.path.name}")
+                }
+            }
+        }
 
         // Store into LiveU LRT ARQ ring buffer for instant retransmission
         ringBuffer[seq] = pkt
@@ -291,7 +312,7 @@ class BondSession(
 
         // Proactive LiveU Header & Handshake Duplication across secondary physical interface
         if (success && enableRedundancy && isCriticalPayload(payload, seq)) {
-            val secondary = getSecondaryActivePath(selectedPath.pathId)
+            val secondary = getSecondaryActivePath(client.path.pathId)
             if (secondary != null) {
                 val dupPkt = BondPacket(
                     packetType = PacketType.DATA,
@@ -318,9 +339,9 @@ class BondSession(
                     val baseSeq = fecBuffer[0].first
                     val payloads = fecBuffer.map { it.second }
                     val fecPayload = BondPacket.encodeFecPayload(baseSeq, fecBuffer.size, payloads)
-                    val onlineClients = pathClients.values.filter { it.path.status == PathStatus.ONLINE }
+                    val onlineClients = pathClients.values.filter { it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.RECOVERING }
                     if (onlineClients.isNotEmpty()) {
-                        val alt = onlineClients.filter { it.path.pathId != selectedPath.pathId }
+                        val alt = onlineClients.filter { it.path.pathId != client.path.pathId }
                         val fecClient = alt.firstOrNull() ?: onlineClients.first()
                         val fecPkt = BondPacket(
                             packetType = PacketType.DATA,
