@@ -483,13 +483,19 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         previewNetworkManager = com.streamezy.capture.bonding.AndroidNetworkManager(this).apply {
             onPathsChanged = { _ ->
                 runOnUiThread {
-                    if (!isStreaming) {
+                    if (!isFinishing && !isDestroyed && !isStreaming) {
                         updateNetworkStatusPreview()
                     }
                 }
             }
-            startDiscovery()
         }
+        Thread({
+            try {
+                previewNetworkManager?.startDiscovery()
+            } catch (e: Exception) {
+                Log.w(TAG, "previewNetworkManager startDiscovery failed: ${e.message}")
+            }
+        }, "PreviewNetDiscovery").start()
 
         updateOrientationHint(resources.configuration.orientation)
         updateHeaderOrientation(resources.configuration.orientation)
@@ -1369,11 +1375,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         if (isStreaming) return
         headerRowBonding.visibility = View.VISIBLE
         try {
-            val netMgr = previewNetworkManager ?: com.streamezy.capture.bonding.AndroidNetworkManager(this).also {
-                previewNetworkManager = it
-                it.startDiscovery()
-            }
-            netMgr.refreshCurrentNetworks()
+            val netMgr = previewNetworkManager ?: return
 
             val wifiPath = netMgr.paths[com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_WIFI]
             val sim1Path = netMgr.paths[com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM1]
@@ -1788,9 +1790,11 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             // to expose BOTH Wi-Fi and cellular simultaneously for LiveU LRT-style bonding.
             val paths = if (bondSession != null) {
                 bondSession!!.networkManager.paths.values.toList()
+            } else if (previewNetworkManager != null) {
+                previewNetworkManager!!.paths.values.toList()
             } else {
                 val netMgr = com.streamezy.capture.bonding.AndroidNetworkManager(this)
-                netMgr.startDiscovery()   // ← CRITICAL: forces concurrent cellular detection
+                netMgr.refreshCurrentNetworks()
                 netMgr.paths.values.toList()
             }
 

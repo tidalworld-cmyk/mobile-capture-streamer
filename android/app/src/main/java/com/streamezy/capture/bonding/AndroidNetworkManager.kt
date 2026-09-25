@@ -67,7 +67,7 @@ class AndroidNetworkManager(private val context: Context) {
             cellularNetworkCallback = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
                     Log.i(TAG, "Cellular available for bonding: $network")
-                    handleCellularAvailable(network)
+                    handleCellularAvailable(network, true)
                 }
                 override fun onLost(network: Network) {
                     Log.i(TAG, "Cellular lost: $network")
@@ -96,7 +96,7 @@ class AndroidNetworkManager(private val context: Context) {
             wifiNetworkCallback = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
                     Log.i(TAG, "Wi-Fi available: $network")
-                    handleWifiAvailable(network)
+                    handleWifiAvailable(network, true)
                 }
                 override fun onLost(network: Network) {
                     Log.i(TAG, "Wi-Fi lost: $network")
@@ -121,7 +121,7 @@ class AndroidNetworkManager(private val context: Context) {
 
             ethernetNetworkCallback = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
-                    handleEthernetAvailable(network)
+                    handleEthernetAvailable(network, true)
                 }
                 override fun onLost(network: Network) {
                     handleNetworkLost(network)
@@ -135,11 +135,11 @@ class AndroidNetworkManager(private val context: Context) {
             Log.w(TAG, "registerNetworkCallback ethernet failed: ${e.message}")
         }
 
-        // Also do an immediate scan
-        refreshCurrentNetworks()
+        // Initial scan without individual callback spam; notify once at end
+        refreshCurrentNetworks(notify = true)
     }
 
-    private fun handleWifiAvailable(network: Network) {
+    private fun handleWifiAvailable(network: Network, notify: Boolean = true) {
         val path = paths[PATH_ID_WIFI] ?: return
         path.network = network
         path.status = PathStatus.ONLINE
@@ -153,10 +153,10 @@ class AndroidNetworkManager(private val context: Context) {
         val upstream = caps?.linkUpstreamBandwidthKbps ?: 0
         path.availableBandwidthMbps = if (upstream > 0) upstream / 1000.0 else 25.0
         Log.i(TAG, "Wi-Fi path updated: ${path.name} @ ${path.availableBandwidthMbps} Mbps")
-        notifyPathsChanged()
+        if (notify) notifyPathsChanged()
     }
 
-    private fun handleCellularAvailable(network: Network) {
+    private fun handleCellularAvailable(network: Network, notify: Boolean = true) {
         val sim1 = paths[PATH_ID_SIM1]
         val sim2 = paths[PATH_ID_SIM2]
         val caps = connectivityManager.getNetworkCapabilities(network)
@@ -189,10 +189,10 @@ class AndroidNetworkManager(private val context: Context) {
             sim2?.availableBandwidthMbps = mbps
             Log.i(TAG, "SIM2 path updated: ${sim2?.name} @ $mbps Mbps")
         }
-        notifyPathsChanged()
+        if (notify) notifyPathsChanged()
     }
 
-    private fun handleEthernetAvailable(network: Network) {
+    private fun handleEthernetAvailable(network: Network, notify: Boolean = true) {
         val eth = paths[PATH_ID_ETHERNET] ?: return
         eth.network = network
         eth.status = PathStatus.ONLINE
@@ -202,7 +202,7 @@ class AndroidNetworkManager(private val context: Context) {
         val caps = connectivityManager.getNetworkCapabilities(network)
         val upstream = caps?.linkUpstreamBandwidthKbps ?: 0
         eth.availableBandwidthMbps = if (upstream > 0) upstream / 1000.0 else 50.0
-        notifyPathsChanged()
+        if (notify) notifyPathsChanged()
     }
 
     private fun handleCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
@@ -247,16 +247,23 @@ class AndroidNetworkManager(private val context: Context) {
      * NOTE: allNetworks does NOT return cellular when Wi-Fi is active unless requestNetwork was called first.
      * This is why startDiscovery() + requestNetwork(CELLULAR) is required for bonding.
      */
-    fun refreshCurrentNetworks() {
-        val all = connectivityManager.allNetworks
-        Log.i(TAG, "refreshCurrentNetworks: found ${all.size} system networks")
-        for (net in all) {
-            val caps = connectivityManager.getNetworkCapabilities(net) ?: continue
-            when {
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> handleWifiAvailable(net)
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> handleCellularAvailable(net)
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> handleEthernetAvailable(net)
+    fun refreshCurrentNetworks(notify: Boolean = false) {
+        try {
+            val all = connectivityManager.allNetworks
+            Log.i(TAG, "refreshCurrentNetworks: found ${all.size} system networks")
+            for (net in all) {
+                val caps = connectivityManager.getNetworkCapabilities(net) ?: continue
+                when {
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> handleWifiAvailable(net, false)
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> handleCellularAvailable(net, false)
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> handleEthernetAvailable(net, false)
+                }
             }
+            if (notify) {
+                notifyPathsChanged()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "refreshCurrentNetworks error: ${e.message}")
         }
     }
 
