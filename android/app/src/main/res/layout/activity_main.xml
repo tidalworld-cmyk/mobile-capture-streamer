@@ -194,7 +194,7 @@
             android:orientation="vertical"
             android:visibility="gone">
 
-            <!-- Row 1: Connection Count & Network Names -->
+            <!-- Row 1: Connection Badge & Wi-Fi Network Details -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -219,13 +219,24 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
-                    android:text="0 Networks Connected"
+                    android:text="Wi-Fi: Disconnected"
                     android:textColor="@color/white"
                     android:textSize="10sp"
                     android:textStyle="bold" />
             </LinearLayout>
 
-            <!-- Row 2: Available Bandwidth, Real-time Usage, and Latency -->
+            <!-- Row 2: SIM / Cellular Networks Details -->
+            <TextView
+                android:id="@+id/tvBondingSimNetworks"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="SIM: Standby / No Data"
+                android:textColor="@color/white"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+
+            <!-- Row 3: Available Bandwidth, Real-time Usage, and Latency -->
             <TextView
                 android:id="@+id/tvBondingMetrics"
                 android:layout_width="match_parent"

@@ -186,8 +186,10 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private lateinit var headerRowBonding: LinearLayout
     private lateinit var tvBondingBadge: TextView
     private lateinit var tvBondingNetworks: TextView
+    private lateinit var tvBondingSimNetworks: TextView
     private lateinit var tvBondingMetrics: TextView
     private lateinit var btnNetworkCenter: ImageButton
+    private var previewNetworkManager: com.streamezy.capture.bonding.AndroidNetworkManager? = null
 
     private enum class ActiveSource { REAR, FRONT, OTG }
     private var currentSource = ActiveSource.REAR
@@ -473,8 +475,21 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         headerRowBonding = findViewById(R.id.headerRowBonding)
         tvBondingBadge = findViewById(R.id.tvBondingBadge)
         tvBondingNetworks = findViewById(R.id.tvBondingNetworks)
+        tvBondingSimNetworks = findViewById(R.id.tvBondingSimNetworks)
         tvBondingMetrics = findViewById(R.id.tvBondingMetrics)
         btnNetworkCenter = findViewById(R.id.btnNetworkCenter)
+
+        // Persistent preview network manager for concurrent Wi-Fi + Cellular detection
+        previewNetworkManager = com.streamezy.capture.bonding.AndroidNetworkManager(this).apply {
+            onPathsChanged = { _ ->
+                runOnUiThread {
+                    if (!isStreaming) {
+                        updateNetworkStatusPreview()
+                    }
+                }
+            }
+            startDiscovery()
+        }
 
         updateOrientationHint(resources.configuration.orientation)
         updateHeaderOrientation(resources.configuration.orientation)
@@ -1301,7 +1316,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         val count = onlinePaths.size
 
         if (metrics.isBonded) {
-            tvBondingBadge.text = "BONDED"
+            tvBondingBadge.text = "BONDED ($count)"
             tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
         } else if (count > 0) {
             tvBondingBadge.text = "1 NET"
@@ -1311,8 +1326,24 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.text_secondary))
         }
 
-        val netSummary = onlinePaths.joinToString(" ") { "${it.name} ●" }
-        tvBondingNetworks.text = if (netSummary.isNotBlank()) "[$count Networks Connected: $netSummary]" else "0 Connected"
+        val wifiPath = metrics.paths.firstOrNull { it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_WIFI }
+        val simPath = metrics.paths.firstOrNull { it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM1 || it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM2 }
+
+        // Line 1: Wi-Fi live TX metrics
+        if (wifiPath?.status == com.streamezy.capture.bonding.PathStatus.ONLINE) {
+            val ssid = if (wifiPath.carrierName.isNotBlank() && wifiPath.carrierName != "Wi-Fi") wifiPath.carrierName else "Connected"
+            tvBondingNetworks.text = String.format("Wi-Fi: %s ● TX: %.1f Mbps (%dms)", ssid, wifiPath.currentUsageMbps, wifiPath.latencyMs)
+        } else {
+            tvBondingNetworks.text = "Wi-Fi: Disconnected"
+        }
+
+        // Line 2: SIM live TX metrics
+        if (simPath?.status == com.streamezy.capture.bonding.PathStatus.ONLINE) {
+            val carrier = if (simPath.carrierName.isNotBlank() && simPath.carrierName != "Carrier unavailable") simPath.carrierName else "Cellular"
+            tvBondingSimNetworks.text = String.format("SIM: %s ● TX: %.1f Mbps (%dms)", carrier, simPath.currentUsageMbps, simPath.latencyMs)
+        } else {
+            tvBondingSimNetworks.text = "SIM: Standby / No Data"
+        }
 
         val sentMb = metrics.totalBytesSent / (1024.0 * 1024.0)
         val arqRepaired = metrics.retransmissionsRepaired
@@ -1330,23 +1361,61 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         if (isStreaming) return
         headerRowBonding.visibility = View.VISIBLE
         try {
-            val netMgr = com.streamezy.capture.bonding.AndroidNetworkManager(this)
+            val netMgr = previewNetworkManager ?: com.streamezy.capture.bonding.AndroidNetworkManager(this).also {
+                previewNetworkManager = it
+                it.startDiscovery()
+            }
             netMgr.refreshCurrentNetworks()
-            val usable = netMgr.getUsablePaths()
-            val count = usable.size
-            if (count >= 2) {
-                tvBondingBadge.text = "BONDED"
+
+            val wifiPath = netMgr.paths[com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_WIFI]
+            val sim1Path = netMgr.paths[com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM1]
+            val sim2Path = netMgr.paths[com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM2]
+
+            val isWifiOnline = wifiPath?.status == com.streamezy.capture.bonding.PathStatus.ONLINE
+            val isSim1Online = sim1Path?.status == com.streamezy.capture.bonding.PathStatus.ONLINE
+            val isSim2Online = sim2Path?.status == com.streamezy.capture.bonding.PathStatus.ONLINE
+
+            val onlineCount = (if (isWifiOnline) 1 else 0) + (if (isSim1Online) 1 else 0) + (if (isSim2Online) 1 else 0)
+
+            if (onlineCount >= 2) {
+                tvBondingBadge.text = "BONDED ($onlineCount)"
                 tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
-            } else if (count == 1) {
+            } else if (onlineCount == 1) {
                 tvBondingBadge.text = "1 NET"
                 tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_blue))
             } else {
                 tvBondingBadge.text = "OFFLINE"
                 tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.text_secondary))
             }
-            val netList = usable.joinToString(" ") { "${it.name} ●" }
-            tvBondingNetworks.text = if (netList.isNotBlank()) "$count Connected: $netList" else "0 Connected"
-            val totalAvail = usable.sumOf { it.availableBandwidthMbps }
+
+            // Line 1: Wi-Fi details
+            if (isWifiOnline && wifiPath != null) {
+                val ssid = if (wifiPath.carrierName.isNotBlank() && wifiPath.carrierName != "Wi-Fi") wifiPath.carrierName else "Connected"
+                tvBondingNetworks.text = String.format("Wi-Fi: %s ● Online (%.1f Mbps)", ssid, wifiPath.availableBandwidthMbps)
+            } else {
+                tvBondingNetworks.text = "Wi-Fi: Disconnected"
+            }
+
+            // Line 2: SIM network details
+            val activeSim = if (isSim1Online) sim1Path else if (isSim2Online) sim2Path else null
+            if (activeSim != null) {
+                val carrier = if (activeSim.carrierName.isNotBlank() && activeSim.carrierName != "Carrier unavailable") activeSim.carrierName else "Cellular"
+                val netType = netMgr.getNetworkTypeName()
+                tvBondingSimNetworks.text = String.format("SIM: %s (%s) ● Online (%.1f Mbps)", carrier, netType, activeSim.availableBandwidthMbps)
+            } else {
+                val simCarrier = netMgr.getSimCarrierName(0)
+                if (simCarrier != "Carrier unavailable") {
+                    val netType = netMgr.getNetworkTypeName()
+                    tvBondingSimNetworks.text = "SIM: $simCarrier ($netType) ● Standby / No Data"
+                } else {
+                    tvBondingSimNetworks.text = "SIM: Standby / No Data"
+                }
+            }
+
+            val totalAvail = (if (isWifiOnline) wifiPath?.availableBandwidthMbps ?: 0.0 else 0.0) +
+                             (if (isSim1Online) sim1Path?.availableBandwidthMbps ?: 0.0 else 0.0) +
+                             (if (isSim2Online) sim2Path?.availableBandwidthMbps ?: 0.0 else 0.0)
+
             tvBondingMetrics.text = String.format("Avail: %.1f Mbps | Usage: 0.0 Mbps (Standby)", totalAvail)
         } catch (e: Exception) {
             Log.w(TAG, "updateNetworkStatusPreview failed", e)
@@ -2086,6 +2155,10 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         } catch (e: Exception) {
             Log.e(TAG, "onDestroy stream cleanup failed", e)
         }
+        try {
+            previewNetworkManager?.stopDiscovery()
+            previewNetworkManager = null
+        } catch (e: Exception) {}
         if (::telemetryManager.isInitialized) {
             telemetryManager.stop()
         }
