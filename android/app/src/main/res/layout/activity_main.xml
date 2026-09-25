@@ -45,9 +45,21 @@
                 android:id="@+id/ivAppLogo"
                 android:layout_width="22dp"
                 android:layout_height="22dp"
-                android:layout_marginEnd="8dp"
+                android:layout_marginEnd="6dp"
                 android:src="@drawable/ic_app_logo"
                 android:contentDescription="StreamEzy Logo" />
+
+            <!-- App Title & Remotely Updatable Version Display -->
+            <TextView
+                android:id="@+id/tvAppVersion"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:text="StreamEzy v2.0.5"
+                android:textColor="@color/white"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace" />
 
             <!-- Live Badge -->
             <TextView

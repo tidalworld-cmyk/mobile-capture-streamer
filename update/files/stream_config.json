@@ -1,0 +1,18 @@
+{
+  "rtmp_url": "rtmp://srv1990205.hstgr.cloud:1935/live",
+  "bonding_server_host": "srv1990205.hstgr.cloud",
+  "bonding_server_port": 5000,
+  "default_bitrate": 1500000,
+  "max_bitrate": 1500000,
+  "aspect_ratio": "16:9",
+  "video_width": 1280,
+  "video_height": 720,
+  "fps": 30,
+  "audio_bitrate": 128000,
+  "bonding_enabled": true,
+  "bonding_mode": "ON",
+  "bonding_playout_delay_ms": 1000.0,
+  "bonding_enable_arq": true,
+  "bonding_enable_fec": true,
+  "bonding_fec_block_size": 8
+}

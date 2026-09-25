@@ -14,361 +14,274 @@
         android:orientation="vertical"
         android:padding="20dp">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/stream_settings"
-        android:textColor="@color/white"
-        android:textSize="18sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="Stream at locked 30 FPS and 1000 kbps"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp" />
-
-    <!-- RTMP Server URL -->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:text="RTMP URL / Server"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp"
-        android:textStyle="bold" />
-
-    <EditText
-        android:id="@+id/etRtmpUrl"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:layout_marginTop="4dp"
-        android:background="#242C3D"
-        android:hint="@string/rtmp_url_hint"
-        android:inputType="textUri"
-        android:paddingHorizontal="12dp"
-        android:textColor="@color/white"
-        android:textColorHint="@color/text_secondary"
-        android:textSize="14sp" />
-
-    <!-- Stream Key -->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="Stream Key"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp"
-        android:textStyle="bold" />
-
-    <EditText
-        android:id="@+id/etStreamKey"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:layout_marginTop="4dp"
-        android:background="#242C3D"
-        android:hint="@string/stream_key_hint"
-        android:inputType="textVisiblePassword"
-        android:paddingHorizontal="12dp"
-        android:textColor="@color/white"
-        android:textColorHint="@color/text_secondary"
-        android:textSize="14sp" />
-
-    <!-- Quick Presets -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:orientation="horizontal">
-
-        <Button
-            android:id="@+id/btnPresetVps"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
+        <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="VPS Relay"
-            android:textColor="@color/accent_blue"
-            android:textSize="12sp" />
-
-        <Button
-            android:id="@+id/btnPresetYouTube"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:text="YouTube Live"
-            android:textColor="@color/accent_blue"
-            android:textSize="12sp" />
-    </LinearLayout>
-
-    <!-- Fixed Aspect Ratio Selector -->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="Video Aspect Ratio (Fixed Across Devices)"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp"
-        android:textStyle="bold" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:orientation="horizontal"
-        android:weightSum="3">
-
-        <Button
-            android:id="@+id/btnRatio16x9"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="16:9"
+            android:text="@string/stream_settings"
             android:textColor="@color/white"
-            android:textSize="12sp" />
-
-        <Button
-            android:id="@+id/btnRatio9x16"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="4dp"
-            android:text="9:16"
-            android:textColor="@color/white"
-            android:textSize="12sp" />
-
-        <Button
-            android:id="@+id/btnRatio4x3"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="4dp"
-            android:text="4:3"
-            android:textColor="@color/white"
-            android:textSize="12sp" />
-    </LinearLayout>
-
-    <!-- Video Bitrate Selector -->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="Video Bitrate (Field Transmission)"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp"
-        android:textStyle="bold" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:orientation="horizontal"
-        android:weightSum="4">
-
-        <Button
-            android:id="@+id/btnBitrate100k"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="100k\nLow"
-            android:textColor="@color/white"
-            android:textSize="11sp" />
-
-        <Button
-            android:id="@+id/btnBitrate500k"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:layout_weight="1"
-            android:text="500k\nMid"
-            android:textColor="@color/white"
-            android:textSize="11sp" />
-
-        <Button
-            android:id="@+id/btnBitrate1000k"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:layout_weight="1"
-            android:text="1000k\n1 Mbps"
-            android:textColor="@color/white"
-            android:textSize="11sp" />
-
-        <Button
-            android:id="@+id/btnBitrate2500k"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:layout_weight="1"
-            android:text="2500k\nHD"
-            android:textColor="@color/white"
-            android:textSize="11sp" />
-    </LinearLayout>
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        android:text="💡 100k: LiveU ultra-low bandwidth mode with VPS cloud enhancement."
-        android:textColor="@color/text_secondary"
-        android:textSize="10sp" />
-
-    <!-- BondStream Multi-Network Bonding (Phase 1 Transport) -->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:text="BondStream Multi-Network Bonding"
-        android:textColor="@color/white"
-        android:textSize="13sp"
-        android:textStyle="bold" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:background="#1E293B"
-        android:orientation="vertical"
-        android:padding="10dp">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Enable Multi-Path Bonding"
-                android:textColor="@color/white"
-                android:textSize="13sp" />
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchBonding"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
-        </LinearLayout>
+            android:textSize="18sp"
+            android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/tvBondingPathStatus"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Detecting paths: Wi-Fi / Cellular..."
+            android:text="Stream Settings &amp; Multi-Path Network Configuration"
             android:textColor="@color/text_secondary"
-            android:textSize="11sp" />
+            android:textSize="12sp" />
 
-        <LinearLayout
-            android:layout_width="match_parent"
+        <!-- RTMP Server URL -->
+        <TextView
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:orientation="horizontal">
-
-            <EditText
-                android:id="@+id/etBondingHost"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_weight="2"
-                android:background="#242C3D"
-                android:hint="VPS IP (e.g. 192.168.29.184)"
-                android:inputType="text"
-                android:paddingHorizontal="8dp"
-                android:textColor="@color/white"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="12sp" />
-
-            <EditText
-                android:id="@+id/etBondingPort"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_marginStart="6dp"
-                android:layout_weight="1"
-                android:background="#242C3D"
-                android:hint="Port (5000)"
-                android:inputType="number"
-                android:paddingHorizontal="8dp"
-                android:textColor="@color/white"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="12sp" />
-        </LinearLayout>
+            android:layout_marginTop="16dp"
+            android:text="RTMP URL / Server Endpoint"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
 
         <EditText
-            android:id="@+id/etBondingAuthToken"
+            android:id="@+id/etRtmpUrl"
             android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:layout_marginTop="8dp"
+            android:layout_height="48dp"
+            android:layout_marginTop="4dp"
             android:background="#242C3D"
-            android:hint="Auth Token / Key (Leave empty to use Stream Key)"
-            android:inputType="text"
-            android:paddingHorizontal="8dp"
+            android:hint="rtmp://srv1990205.hstgr.cloud:1935/live"
+            android:inputType="textUri"
+            android:paddingHorizontal="12dp"
             android:textColor="@color/white"
             android:textColorHint="@color/text_secondary"
-            android:textSize="12sp" />
+            android:textSize="14sp" />
+
+        <!-- Stream Key -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Stream Key"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/etStreamKey"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="4dp"
+            android:background="#242C3D"
+            android:hint="Enter stream key (e.g. siva or live)"
+            android:inputType="textVisiblePassword"
+            android:paddingHorizontal="12dp"
+            android:textColor="@color/white"
+            android:textColorHint="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <!-- Fixed Aspect Ratio Selector -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Video Aspect Ratio"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal"
+            android:weightSum="3">
 
-            <TextView
+            <Button
+                android:id="@+id/btnRatio16x9"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Auto-Fallback to Direct RTMP if VPS fails"
-                android:textColor="@color/text_secondary"
-                android:textSize="11sp" />
+                android:text="16:9"
+                android:textColor="@color/white"
+                android:textSize="12sp" />
 
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchAutoFallback"
-                android:layout_width="wrap_content"
+            <Button
+                android:id="@+id/btnRatio9x16"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:checked="true" />
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:text="9:16"
+                android:textColor="@color/white"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnRatio4x3"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:text="4:3"
+                android:textColor="@color/white"
+                android:textSize="12sp" />
         </LinearLayout>
 
-        <Button
-            android:id="@+id/btnTestBonding"
-            android:layout_width="match_parent"
-            android:layout_height="36dp"
-            android:layout_marginTop="8dp"
-            android:backgroundTint="#334155"
-            android:text="Test Multi-Path Connection"
-            android:textColor="@color/white"
+        <!-- Video Bitrate Selector -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Target Bitrate (Max 1.5 Mbps Global Cap Enforced)"
+            android:textColor="@color/text_secondary"
             android:textSize="12sp"
-            app:cornerRadius="6dp" />
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal"
+            android:weightSum="3">
+
+            <Button
+                android:id="@+id/btnBitrate500k"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="500k\nLow"
+                android:textColor="@color/white"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btnBitrate1000k"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                android:text="1000k\n1.0 Mbps"
+                android:textColor="@color/white"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btnBitrate1500k"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                android:text="1500k\n1.5 Mbps (Max)"
+                android:textColor="@color/white"
+                android:textSize="11sp" />
+        </LinearLayout>
 
         <TextView
-            android:id="@+id/tvTestBondingResults"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:textColor="@color/accent_green"
-            android:textSize="11sp"
-            android:visibility="gone" />
-    </LinearLayout>
+            android:text="🔒 Global Data Transmission Cap: Capped at 1.5 Mbps max across all active paths combined."
+            android:textColor="@color/accent_blue"
+            android:textSize="10.5sp" />
 
-    <!-- Save Button -->
-    <Button
-        android:id="@+id/btnSaveSettings"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:layout_marginTop="16dp"
-        android:backgroundTint="@color/accent_blue"
-        android:text="@string/save"
-        android:textColor="@color/white"
-        android:textStyle="bold"
-        app:cornerRadius="8dp" />
+        <!-- BondStream Multi-Network Bonding -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Multi-Path Bonding &amp; VPS Relay"
+            android:textColor="@color/white"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="#1E293B"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Enable Multi-Path Bonding"
+                    android:textColor="@color/white"
+                    android:textSize="13sp" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchBonding"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/etBondingHost"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="2"
+                    android:background="#242C3D"
+                    android:hint="srv1990205.hstgr.cloud"
+                    android:inputType="text"
+                    android:paddingHorizontal="8dp"
+                    android:textColor="@color/white"
+                    android:textColorHint="@color/text_secondary"
+                    android:textSize="12sp" />
+
+                <EditText
+                    android:id="@+id/etBondingPort"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:background="#242C3D"
+                    android:hint="5000"
+                    android:inputType="number"
+                    android:paddingHorizontal="8dp"
+                    android:textColor="@color/white"
+                    android:textColorHint="@color/text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- CHECK CONNECTIONS Button -->
+            <Button
+                android:id="@+id/btnCheckConnections"
+                android:layout_width="match_parent"
+                android:layout_height="42dp"
+                android:layout_marginTop="12dp"
+                android:backgroundTint="@color/accent_blue"
+                android:text="CHECK CONNECTIONS"
+                android:textColor="@color/white"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                app:cornerRadius="6dp" />
+
+        </LinearLayout>
+
+        <!-- Save Button -->
+        <Button
+            android:id="@+id/btnSaveSettings"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="16dp"
+            android:backgroundTint="@color/accent_blue"
+            android:text="@string/save"
+            android:textColor="@color/white"
+            android:textStyle="bold"
+            app:cornerRadius="8dp" />
     </LinearLayout>
 </ScrollView>

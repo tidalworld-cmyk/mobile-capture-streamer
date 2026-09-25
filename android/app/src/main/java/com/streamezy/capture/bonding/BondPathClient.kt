@@ -173,4 +173,22 @@ class BondPathClient(
         heartbeatThread?.interrupt()
         path.status = PathStatus.DISCONNECTED
     }
+
+    fun rebindNetwork(newNetwork: android.net.Network) {
+        try {
+            path.network = newNetwork
+            val oldSocket = socket
+            val newSocket = DatagramSocket()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                newNetwork.bindSocket(newSocket)
+            }
+            socket = newSocket
+            try {
+                oldSocket?.close()
+            } catch (ignored: Exception) {}
+            Log.i(TAG, "Rebound DatagramSocket to refreshed Android Network ${path.name}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to rebind socket to network ${path.name}: ${e.message}")
+        }
+    }
 }

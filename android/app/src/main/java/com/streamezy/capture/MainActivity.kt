@@ -38,6 +38,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import com.streamezy.capture.monitoring.MobileTelemetryManager
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
@@ -58,6 +59,8 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
     private lateinit var textureView: TextureView
     private lateinit var tvLiveBadge: TextView
+    private lateinit var tvAppVersion: TextView
+    private lateinit var onlineUpdateManager: com.streamezy.capture.update.OnlineUpdateManager
     private lateinit var tvUptime: TextView
     private lateinit var headerRow2: LinearLayout
     private lateinit var tvStreamStatsPortrait: TextView
@@ -189,6 +192,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private enum class ActiveSource { REAR, FRONT, OTG }
     private var currentSource = ActiveSource.REAR
 
+    // VPS Device Monitoring & Telemetry
+    private lateinit var telemetryManager: MobileTelemetryManager
+
     private var isStreaming = false
     private var streamStartTime: Long = 0
     private var lastLiveClickTime: Long = 0
@@ -202,6 +208,17 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 val minutes = (elapsed % 3600) / 60
                 val seconds = elapsed % 60
                 tvUptime.text = String.format("%02d:%02d:%02d", hours, minutes, seconds)
+
+                // Dispatch stream telemetry to VPS monitoring
+                if (::telemetryManager.isInitialized) {
+                    val kbps = smoothedKbps.toInt()
+                    telemetryManager.sendStreamTelemetry(
+                        fps = 30f,
+                        videoBitrate = if (kbps > 10) kbps * 1000 else streamConfig.videoBitrate,
+                        audioBitrate = StreamConfig.DEFAULT_AUDIO_BITRATE
+                    )
+                }
+
                 uptimeHandler.postDelayed(this, 1000)
             }
         }
@@ -325,7 +342,29 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
             streamConfig = StreamConfig(this)
 
+            // Start VPS Device Monitoring
+            telemetryManager = MobileTelemetryManager(this, streamConfig.bondingServerHost, 8080)
+            telemetryManager.cameraStatus = "preview"
+            telemetryManager.start()
+
             initViews()
+
+            // Initialize Online Update System & Version Display
+            onlineUpdateManager = com.streamezy.capture.update.OnlineUpdateManager(this)
+            tvAppVersion.text = "StreamEzy v${onlineUpdateManager.getActiveVersion()}"
+
+            // Online File & Version Update Check (Non-blocking background async)
+            onlineUpdateManager.checkAndUpdateAsync(
+                onStatusUpdate = { msg ->
+                    Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                },
+                onVersionUpdated = { newVer, _ ->
+                    tvAppVersion.text = "StreamEzy v$newVer"
+                    streamConfig.loadRemoteConfigOverrides()
+                    Toast.makeText(this, "StreamEzy updated to v$newVer", Toast.LENGTH_SHORT).show()
+                }
+            )
+
             setupListeners()
             registerUsbReceiver()
             registerBatteryReceiver()
@@ -371,6 +410,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private fun initViews() {
         textureView = findViewById(R.id.textureView)
         tvLiveBadge = findViewById(R.id.tvLiveBadge)
+        tvAppVersion = findViewById(R.id.tvAppVersion)
         tvUptime = findViewById(R.id.tvUptime)
         headerRow2 = findViewById(R.id.headerRow2)
         tvStreamStatsPortrait = findViewById(R.id.tvStreamStatsPortrait)
@@ -1188,9 +1228,25 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                     streamConfig.fecBlockSize
                 ).apply {
                     mode = com.streamezy.capture.bonding.BondingMode.ON
+                    onRecommendedBitrate = { targetBitrateKbps ->
+                        runOnUiThread {
+                            try {
+                                genericStream?.setVideoBitrateOnFly(targetBitrateKbps * 1000)
+                                Log.i(TAG, "ABR adjusted hardware encoder bitrate to $targetBitrateKbps kbps")
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to adjust bitrate: ${e.message}")
+                            }
+                        }
+                    }
                     onMetricsUpdated = { metrics ->
                         runOnUiThread {
                             updateBondingHeaderUI(metrics)
+                            val statusMsg = if (metrics.isBonded) "Bonded: Wi-Fi + 4G/5G Active" else "Streaming: 1 Network Active"
+                            com.streamezy.capture.service.BondStreamingService.updateStatus(
+                                this@MainActivity,
+                                statusMsg,
+                                metrics.combinedUploadMbps
+                            )
                         }
                     }
                     onAuthFailed = { reason ->
@@ -1223,6 +1279,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 Log.i(TAG, "Direct RTMP streaming: $targetUrl")
             }
 
+            com.streamezy.capture.service.BondStreamingService.startService(this@MainActivity, "StreamEzy Streaming Active")
             stream.startStream(targetUrl)
         } catch (e: Throwable) {
             Log.e(TAG, "startStream failed", e)
@@ -1310,6 +1367,13 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         } catch (e: Exception) {
             Log.w(TAG, "Bonding shutdown error", e)
         }
+
+        // Notify VPS monitoring of stream stop
+        if (::telemetryManager.isInitialized) {
+            telemetryManager.notifyStreamStopped("user_stopped")
+        }
+
+        com.streamezy.capture.service.BondStreamingService.stopService(this@MainActivity)
         updateNetworkStatusPreview()
         onDisconnect()
     }
@@ -1491,8 +1555,6 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_settings, null)
         val etRtmpUrl = dialogView.findViewById<EditText>(R.id.etRtmpUrl)
         val etStreamKey = dialogView.findViewById<EditText>(R.id.etStreamKey)
-        val btnPresetVps = dialogView.findViewById<Button>(R.id.btnPresetVps)
-        val btnPresetYouTube = dialogView.findViewById<Button>(R.id.btnPresetYouTube)
         val btnSave = dialogView.findViewById<Button>(R.id.btnSaveSettings)
 
         etRtmpUrl.setText(streamConfig.rtmpUrl)
@@ -1501,20 +1563,6 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         val dialog = AlertDialog.Builder(this)
             .setView(dialogView)
             .create()
-
-        btnPresetVps.setOnClickListener {
-            etRtmpUrl.setText(StreamConfig.DEFAULT_RTMP_URL)
-            etStreamKey.setText(StreamConfig.DEFAULT_STREAM_KEY)
-        }
-
-        btnPresetYouTube.setOnClickListener {
-            etRtmpUrl.setText(StreamConfig.YOUTUBE_RTMP_URL)
-            if (etStreamKey.text.toString().trim() == StreamConfig.DEFAULT_STREAM_KEY) {
-                etStreamKey.setText("")
-            }
-            etStreamKey.hint = "Paste YouTube Stream Key"
-            etStreamKey.requestFocus()
-        }
 
         val btnRatio16x9 = dialogView.findViewById<Button>(R.id.btnRatio16x9)
         val btnRatio9x16 = dialogView.findViewById<Button>(R.id.btnRatio9x16)
@@ -1535,96 +1583,73 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         btnRatio4x3.setOnClickListener { tempRatio = "4:3"; updateRatioUI() }
 
         // Video Bitrate Selector
-        val btnBitrate100k = dialogView.findViewById<Button>(R.id.btnBitrate100k)
         val btnBitrate500k = dialogView.findViewById<Button>(R.id.btnBitrate500k)
         val btnBitrate1000k = dialogView.findViewById<Button>(R.id.btnBitrate1000k)
-        val btnBitrate2500k = dialogView.findViewById<Button>(R.id.btnBitrate2500k)
+        val btnBitrate1500k = dialogView.findViewById<Button>(R.id.btnBitrate1500k)
         var tempBitrate = streamConfig.videoBitrate
 
         fun updateBitrateUI() {
             val activeColor = ContextCompat.getColor(this, R.color.accent_blue)
             val normalColor = ContextCompat.getColor(this, R.color.surface_card)
-            btnBitrate100k?.setBackgroundColor(if (tempBitrate <= 150_000) activeColor else normalColor)
-            btnBitrate500k?.setBackgroundColor(if (tempBitrate in 150_001..750_000) activeColor else normalColor)
-            btnBitrate1000k?.setBackgroundColor(if (tempBitrate in 750_001..1_500_000) activeColor else normalColor)
-            btnBitrate2500k?.setBackgroundColor(if (tempBitrate > 1_500_000) activeColor else normalColor)
+            btnBitrate500k?.setBackgroundColor(if (tempBitrate <= 750_000) activeColor else normalColor)
+            btnBitrate1000k?.setBackgroundColor(if (tempBitrate in 750_001..1_250_000) activeColor else normalColor)
+            btnBitrate1500k?.setBackgroundColor(if (tempBitrate > 1_250_000) activeColor else normalColor)
         }
         updateBitrateUI()
 
-        btnBitrate100k?.setOnClickListener { tempBitrate = StreamConfig.BITRATE_100K; updateBitrateUI() }
         btnBitrate500k?.setOnClickListener { tempBitrate = StreamConfig.BITRATE_500K; updateBitrateUI() }
         btnBitrate1000k?.setOnClickListener { tempBitrate = StreamConfig.BITRATE_1000K; updateBitrateUI() }
-        btnBitrate2500k?.setOnClickListener { tempBitrate = StreamConfig.BITRATE_2500K; updateBitrateUI() }
+        btnBitrate1500k?.setOnClickListener { tempBitrate = StreamConfig.BITRATE_1500K; updateBitrateUI() }
 
         // BondStream UI Binding
         val switchBonding = dialogView.findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchBonding)
         val etBondingHost = dialogView.findViewById<EditText>(R.id.etBondingHost)
         val etBondingPort = dialogView.findViewById<EditText>(R.id.etBondingPort)
-        val etBondingAuthToken = dialogView.findViewById<EditText>(R.id.etBondingAuthToken)
-        val switchAutoFallback = dialogView.findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchAutoFallback)
-        val btnTestBonding = dialogView.findViewById<Button>(R.id.btnTestBonding)
-        val tvTestBondingResults = dialogView.findViewById<TextView>(R.id.tvTestBondingResults)
-        val tvBondingPathStatus = dialogView.findViewById<TextView>(R.id.tvBondingPathStatus)
+        val btnCheckConnections = dialogView.findViewById<Button>(R.id.btnCheckConnections)
 
         switchBonding.isChecked = streamConfig.isBondingEnabled
         etBondingHost.setText(streamConfig.bondingServerHost)
         etBondingPort.setText(streamConfig.bondingServerPort.toString())
-        etBondingAuthToken?.setText(streamConfig.bondingAuthToken)
-        switchAutoFallback?.isChecked = streamConfig.isAutoFallbackEnabled
 
-        btnTestBonding?.setOnClickListener {
-            btnTestBonding.isEnabled = false
-            btnTestBonding.text = "Testing Paths..."
-            tvTestBondingResults?.visibility = View.VISIBLE
-            tvTestBondingResults?.text = "Probing multi-path connectivity..."
+        btnCheckConnections?.setOnClickListener {
+            btnCheckConnections.isEnabled = false
+            btnCheckConnections.text = "Checking Connections..."
 
-            val host = etBondingHost.text.toString().trim().ifEmpty { "192.168.29.184" }
-            val port = etBondingPort.text.toString().toIntOrNull() ?: 5000
-            val token = etBondingAuthToken?.text?.toString()?.trim()?.ifEmpty { etStreamKey.text.toString().trim() } ?: ""
+            val host = etBondingHost.text.toString().trim().ifEmpty { StreamConfig.DEFAULT_VPS_HOST }
+            val port = etBondingPort.text.toString().toIntOrNull() ?: StreamConfig.DEFAULT_VPS_PORT
+            val token = etStreamKey.text.toString().trim()
 
-            val testSession = com.streamezy.capture.bonding.BondSession(this, host, port, token)
-            testSession.runBenchmarkTest(
-                durationSeconds = 4,
-                onProgress = { progress ->
-                    runOnUiThread { tvTestBondingResults?.text = progress }
-                },
-                onComplete = { success, summary ->
-                    runOnUiThread {
-                        btnTestBonding.isEnabled = true
-                        btnTestBonding.text = "Test Multi-Path Connection"
-                        tvTestBondingResults?.text = summary
-                        tvTestBondingResults?.setTextColor(
-                            ContextCompat.getColor(this, if (success) R.color.accent_green else R.color.accent_red)
-                        )
+            val activeSession = bondSession ?: com.streamezy.capture.bonding.BondSession(this, host, port, token)
+            val testRunner = com.streamezy.capture.bonding.BondTestRunner(activeSession)
+
+            testRunner.runCheckConnections { report ->
+                runOnUiThread {
+                    btnCheckConnections.isEnabled = true
+                    btnCheckConnections.text = "CHECK CONNECTIONS"
+
+                    val summary = StringBuilder()
+                    summary.append("🔍 Diagnostic Report:\n\n")
+                    for (step in report.steps) {
+                        val icon = if (step.passed) "✓" else "✕"
+                        summary.append("$icon ${step.stepName}:\n   ${step.details}\n")
                     }
-                }
-            )
-        }
+                    summary.append("\n⚡ Bond Capacity: ${String.format("%.1f", report.totalAvailableMbps)} Mbps\n🔒 Configured Maximum: ${report.configuredMaxMbps} Mbps")
 
-        // Quick path scan display
-        try {
-            val netMgr = com.streamezy.capture.bonding.AndroidNetworkManager(this)
-            netMgr.refreshCurrentNetworks()
-            val paths = netMgr.getUsablePaths()
-            if (paths.isEmpty()) {
-                tvBondingPathStatus.text = "No active network paths found"
-            } else {
-                val totalAvail = paths.sumOf { it.availableBandwidthMbps }
-                val pathSummary = paths.joinToString(", ") { "${it.name} (${String.format("%.1f", it.availableBandwidthMbps)}M)" }
-                tvBondingPathStatus.text = "${paths.size} Networks Connected: $pathSummary\nTotal Available: ${String.format("%.1f", totalAvail)} Mbps"
+                    AlertDialog.Builder(this)
+                        .setTitle("Multi-Path Network Diagnostics")
+                        .setMessage(summary.toString())
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
             }
-        } catch (e: Exception) {
-            tvBondingPathStatus.text = "Path detection ready"
         }
 
         btnSave.setOnClickListener {
-            streamConfig.rtmpUrl = etRtmpUrl.text.toString().trim()
+            streamConfig.rtmpUrl = etRtmpUrl.text.toString().trim().ifEmpty { StreamConfig.DEFAULT_RTMP_URL }
             streamConfig.streamKey = etStreamKey.text.toString().trim()
             streamConfig.isBondingEnabled = switchBonding.isChecked
-            streamConfig.bondingServerHost = etBondingHost.text.toString().trim().ifEmpty { "192.168.29.184" }
-            streamConfig.bondingServerPort = etBondingPort.text.toString().toIntOrNull() ?: 5000
-            streamConfig.bondingAuthToken = etBondingAuthToken?.text?.toString()?.trim() ?: ""
-            streamConfig.isAutoFallbackEnabled = switchAutoFallback?.isChecked ?: true
+            streamConfig.bondingServerHost = etBondingHost.text.toString().trim().ifEmpty { StreamConfig.DEFAULT_VPS_HOST }
+            streamConfig.bondingServerPort = etBondingPort.text.toString().toIntOrNull() ?: StreamConfig.DEFAULT_VPS_PORT
             val ratioChanged = streamConfig.selectedAspectRatio != tempRatio
             val bitrateChanged = streamConfig.videoBitrate != tempBitrate
             streamConfig.selectedAspectRatio = tempRatio
@@ -1671,12 +1696,18 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
         fun populateCards() {
             layoutNetworkCards.removeAllViews()
-            val netMgr = com.streamezy.capture.bonding.AndroidNetworkManager(this)
-            netMgr.refreshCurrentNetworks()
 
+            // Always use the live bondSession networkManager if streaming is active —
+            // it already has startDiscovery() running which keeps cellular alive concurrently.
+            // When no session, we must call startDiscovery() (NOT just refreshCurrentNetworks)
+            // because Android hides cellular from allNetworks when Wi-Fi is active.
+            // requestNetwork(TRANSPORT_CELLULAR) inside startDiscovery() forces Android
+            // to expose BOTH Wi-Fi and cellular simultaneously for LiveU LRT-style bonding.
             val paths = if (bondSession != null) {
                 bondSession!!.networkManager.paths.values.toList()
             } else {
+                val netMgr = com.streamezy.capture.bonding.AndroidNetworkManager(this)
+                netMgr.startDiscovery()   // ← CRITICAL: forces concurrent cellular detection
                 netMgr.paths.values.toList()
             }
 
@@ -1741,45 +1772,43 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 layoutNetworkCards.addView(cardView)
             }
 
-            val notice = netMgr.getDualSimSupportNotice()
-            if (notice != null) {
-                tvCenterNotice.visibility = View.VISIBLE
-                tvCenterNotice.text = notice
-            } else {
-                tvCenterNotice.visibility = View.GONE
-            }
+            tvCenterNotice.visibility = View.GONE
         }
 
         populateCards()
 
         btnBenchmark.setOnClickListener {
             btnBenchmark.isEnabled = false
-            btnBenchmark.text = "Testing Multi-Path..."
+            btnBenchmark.text = "Checking Connections..."
             tvBenchmarkResults.visibility = View.VISIBLE
-            tvBenchmarkResults.text = "Probing multi-path connectivity..."
+            tvBenchmarkResults.text = "Probing multi-path network & VPS connectivity..."
 
-            val host = streamConfig.bondingServerHost.trim().ifEmpty { "192.168.29.184" }
+            val host = streamConfig.bondingServerHost.trim().ifEmpty { StreamConfig.DEFAULT_VPS_HOST }
             val port = streamConfig.bondingServerPort
-            val token = streamConfig.bondingAuthToken.ifBlank { streamConfig.streamKey }
+            val token = streamConfig.streamKey.trim()
 
-            val testSession = com.streamezy.capture.bonding.BondSession(this, host, port, token)
-            testSession.runBenchmarkTest(
-                durationSeconds = 4,
-                onProgress = { progress ->
-                    runOnUiThread { tvBenchmarkResults.text = progress }
-                },
-                onComplete = { success, summary ->
-                    runOnUiThread {
-                        btnBenchmark.isEnabled = true
-                        btnBenchmark.text = "Run Multi-Path Benchmark Test"
-                        tvBenchmarkResults.text = summary
-                        tvBenchmarkResults.setTextColor(
-                            ContextCompat.getColor(this, if (success) R.color.accent_green else R.color.accent_red)
-                        )
-                        populateCards()
+            val activeSession = bondSession ?: com.streamezy.capture.bonding.BondSession(this, host, port, token)
+            val testRunner = com.streamezy.capture.bonding.BondTestRunner(activeSession)
+
+            testRunner.runCheckConnections { report ->
+                runOnUiThread {
+                    btnBenchmark.isEnabled = true
+                    btnBenchmark.text = "Run Multi-Path Benchmark Test"
+                    
+                    val summary = StringBuilder()
+                    for (step in report.steps) {
+                        val icon = if (step.passed) "✓" else "✕"
+                        summary.append("$icon ${step.stepName}: ${step.details}\n")
                     }
+                    summary.append(String.format("Bond Capacity: %.1f Mbps | Configured Max: %.1f Mbps Cap", report.totalAvailableMbps, report.configuredMaxMbps))
+
+                    tvBenchmarkResults.text = summary.toString()
+                    tvBenchmarkResults.setTextColor(
+                        ContextCompat.getColor(this, if (report.isBondActive) R.color.accent_green else R.color.accent_blue)
+                    )
+                    populateCards()
                 }
-            )
+            }
         }
 
         dialog.show()
@@ -1844,6 +1873,18 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
             tvLiveBadge.text = getString(R.string.live_badge)
             tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_red))
+
+            // Notify VPS monitoring of active stream session
+            if (::telemetryManager.isInitialized) {
+                telemetryManager.notifyStreamStarted(
+                    streamKey = streamConfig.streamKey,
+                    resolution = "${streamConfig.videoWidth}x${streamConfig.videoHeight}",
+                    fps = StreamConfig.DEFAULT_FPS,
+                    videoBitrate = streamConfig.videoBitrate,
+                    audioBitrate = StreamConfig.DEFAULT_AUDIO_BITRATE,
+                    connectionType = if (streamConfig.isBondingEnabled) "bonded_android" else "direct_rtmp"
+                )
+            }
 
             Toast.makeText(this, "Live Broadcast Connected!", Toast.LENGTH_SHORT).show()
             updateAudioStatusPanelUI()
@@ -2044,6 +2085,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             }
         } catch (e: Exception) {
             Log.e(TAG, "onDestroy stream cleanup failed", e)
+        }
+        if (::telemetryManager.isInitialized) {
+            telemetryManager.stop()
         }
     }
 }

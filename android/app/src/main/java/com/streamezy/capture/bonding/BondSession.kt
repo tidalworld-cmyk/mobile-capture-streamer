@@ -2,6 +2,7 @@ package com.streamezy.capture.bonding
 
 import android.content.Context
 import android.util.Log
+import com.streamezy.capture.StreamConfig
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -28,13 +29,14 @@ data class BondMetrics(
     val fecPacketsSent: Long,
     val playoutDelayMs: Double,
     val isZeroLoss: Boolean,
-    val paths: List<NetworkPath>
+    val paths: List<NetworkPath>,
+    val configuredMaxMbps: Double = 1.5
 )
 
 class BondSession(
     private val context: Context,
-    var serverHost: String = "192.168.29.184",
-    var serverPort: Int = 5000,
+    var serverHost: String = StreamConfig.DEFAULT_VPS_HOST,
+    var serverPort: Int = StreamConfig.DEFAULT_VPS_PORT,
     var authToken: String = "",
     var playoutDelayMs: Double = 1000.0,
     var enableArq: Boolean = true,
@@ -45,6 +47,7 @@ class BondSession(
     companion object {
         private const val TAG = "BondSession"
         private const val RING_BUFFER_CAPACITY = 2048
+        const val MAX_GLOBAL_BITRATE_KBPS = 1500 // 1.5 Mbps strict global limit
     }
 
     val networkManager = AndroidNetworkManager(context)
@@ -92,11 +95,13 @@ class BondSession(
     var onDownlinkData: ((ByteArray) -> Unit)? = null
     var onAuthFailed: ((String) -> Unit)? = null
     var onMetricsUpdated: ((BondMetrics) -> Unit)? = null
+    var onRecommendedBitrate: ((Int) -> Unit)? = null
+    private var currentBitrateKbps: Int = MAX_GLOBAL_BITRATE_KBPS
     private var metricsThread: Thread? = null
 
     fun start() {
         if (isRunning.getAndSet(true)) return
-        Log.i(TAG, "Starting BondStream LiveU Session $sessionId targeting $serverHost:$serverPort (buffer: ${playoutDelayMs}ms)...")
+        Log.i(TAG, "Starting BondStream Session $sessionId targeting $serverHost:$serverPort (Max Stream Cap: 1.5 Mbps)...")
 
         networkManager.onPathsChanged = { paths ->
             syncPathClients(paths)
@@ -127,15 +132,35 @@ class BondSession(
                     }
 
                     val loss = if (paths.isNotEmpty()) paths.map { it.lossRate }.average() else 0.0
+                    val avgLatency = averageLatencyMs
                     val repaired = retransmissionsRepaired.get()
+
+                    // Strict 1.5 Mbps Global Cap Feedback (ABR)
+                    val targetBitrateKbps = if (currentTotalAvailable < 1.5) {
+                        (currentTotalAvailable * 1000).toInt().coerceIn(300, 1500)
+                    } else {
+                        1500 // Capped strictly at 1.5 Mbps
+                    }
+
+                    if (loss > 0.06 || avgLatency > 350) {
+                        val newBitrate = (currentBitrateKbps - 300).coerceAtLeast(400)
+                        if (newBitrate != currentBitrateKbps) {
+                            currentBitrateKbps = newBitrate
+                            onRecommendedBitrate?.invoke(currentBitrateKbps)
+                        }
+                    } else if (currentBitrateKbps != targetBitrateKbps) {
+                        currentBitrateKbps = targetBitrateKbps
+                        onRecommendedBitrate?.invoke(currentBitrateKbps)
+                    }
+
                     val metrics = BondMetrics(
                         isBonded = isBonded,
                         activePathCount = activePathCount,
-                        combinedUploadMbps = currentTotalUsage,
+                        combinedUploadMbps = currentTotalUsage.coerceAtMost(1.5),
                         totalAvailableBandwidthMbps = currentTotalAvailable,
-                        totalUsageMbps = currentTotalUsage,
+                        totalUsageMbps = currentTotalUsage.coerceAtMost(1.5),
                         totalBytesSent = currentTotalSent,
-                        averageLatencyMs = averageLatencyMs,
+                        averageLatencyMs = avgLatency,
                         averageJitterMs = averageJitterMs,
                         packetLossPct = loss,
                         retransmissionsRepaired = repaired,
@@ -143,7 +168,8 @@ class BondSession(
                         fecPacketsSent = fecPacketsSent.get(),
                         playoutDelayMs = playoutDelayMs,
                         isZeroLoss = loss <= 0.1 || repaired > 0,
-                        paths = paths
+                        paths = paths,
+                        configuredMaxMbps = 1.5
                     )
                     onMetricsUpdated?.invoke(metrics)
                 } catch (e: Exception) {
@@ -170,6 +196,12 @@ class BondSession(
                 pathClients[path.pathId] = client
                 client.start()
                 scheduler.onPathRecovered(path.pathId)
+            } else if (path.isUsable && pathClients.containsKey(path.pathId)) {
+                val existingClient = pathClients[path.pathId]
+                if (existingClient != null && path.network != null && existingClient.path.network != path.network) {
+                    Log.i(TAG, "Network handle changed for ${path.name}, rebinding socket...")
+                    existingClient.rebindNetwork(path.network!!)
+                }
             } else if (!path.isUsable && pathClients.containsKey(path.pathId)) {
                 Log.w(TAG, "Stopping path client for ${path.name}")
                 pathClients.remove(path.pathId)?.stop()
@@ -188,7 +220,11 @@ class BondSession(
         return others.minByOrNull { it.path.latencyMs }
     }
 
-    private fun isCriticalPayload(payload: ByteArray): Boolean {
+    private fun isCriticalPayload(payload: ByteArray, seq: Long): Boolean {
+        // Fast-track initial RTMP handshake and metadata packets across both paths
+        if (seq < 35L) {
+            return true
+        }
         if (payload.size >= 3 && payload[0] == 'F'.code.toByte() && payload[1] == 'L'.code.toByte() && payload[2] == 'V'.code.toByte()) {
             return true
         }
@@ -253,8 +289,8 @@ class BondSession(
             }
         }
 
-        // Proactive LiveU Header Duplication across secondary physical interface
-        if (success && enableRedundancy && isCriticalPayload(payload)) {
+        // Proactive LiveU Header & Handshake Duplication across secondary physical interface
+        if (success && enableRedundancy && isCriticalPayload(payload, seq)) {
             val secondary = getSecondaryActivePath(selectedPath.pathId)
             if (secondary != null) {
                 val dupPkt = BondPacket(

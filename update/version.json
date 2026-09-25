@@ -1,0 +1,17 @@
+{
+  "version": "2.0.5",
+  "build": 205,
+  "updated_at": "2026-09-25T14:30:00Z",
+  "files": [
+    {
+      "path": "stream_config.json",
+      "url": "https://srv1990205.hstgr.cloud/update/files/stream_config.json",
+      "sha256": "03f65ff4688e7a25e1ca01c0d09e51c32cf72f95d28139b8742e5319a723a07b"
+    },
+    {
+      "path": "branding.json",
+      "url": "https://srv1990205.hstgr.cloud/update/files/branding.json",
+      "sha256": "b79660497818300d0dece23b36c62a4c5b21ad40e00ed37390ef01a73e6c3cd3"
+    }
+  ]
+}

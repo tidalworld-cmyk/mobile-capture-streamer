@@ -11,8 +11,8 @@
     <string name="aspect_16_9">16:9 Landscape</string>
     <string name="aspect_9_16">9:16 Shorts</string>
     <string name="stream_settings">Stream Settings</string>
-    <string name="rtmp_url_hint">RTMP Server URL (e.g. rtmp://tn.streamezy.in/siva)</string>
+    <string name="rtmp_url_hint">rtmp://srv1990205.hstgr.cloud:1935/live</string>
     <string name="stream_key_hint">Stream Key</string>
     <string name="save">Save &amp; Close</string>
-    <string name="default_rtmp_url">rtmp://tn.streamezy.in/siva</string>
+    <string name="default_rtmp_url">rtmp://srv1990205.hstgr.cloud:1935/live</string>
 </resources>

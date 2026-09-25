@@ -30,10 +30,18 @@ data class NetworkPath(
     var retransmissionsSent: Long = 0L,
     var availableBandwidthMbps: Double = 0.0,
     var currentUsageMbps: Double = 0.0,
-    var lastBytesSent: Long = 0L
+    var lastBytesSent: Long = 0L,
+    var localIp: String = "",
+    var carrierName: String = "",
+    var statusDetail: String = "Not checked",
+    var isInternetAvailable: Boolean = false,
+    var isVpsReachable: Boolean = false
 ) {
+    val packetLossPct: Double
+        get() = (lossRate * 100.0).toDouble()
+
     val isUsable: Boolean
-        get() = status == PathStatus.ONLINE && network != null
+        get() = status == PathStatus.ONLINE && network != null && isInternetAvailable && isVpsReachable
 
     fun updateMetrics(newLatency: Long, loss: Float, mbps: Double) {
         if (latencyMs > 0L) {

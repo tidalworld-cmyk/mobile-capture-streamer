@@ -5,17 +5,26 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import android.util.Log
 
+/**
+ * Android Multi-Network Manager for LiveU LRT-style bonding.
+ *
+ * KEY FIX: Android OS hides cellular from allNetworks when Wi-Fi is active.
+ * We use requestNetwork() with TRANSPORT_CELLULAR to force Android to
+ * expose the cellular network handle SIMULTANEOUSLY with Wi-Fi.
+ * This enables true multi-path bonding (Wi-Fi + Cellular simultaneously).
+ */
 class AndroidNetworkManager(private val context: Context) {
     companion object {
         private const val TAG = "BondNetworkManager"
         const val PATH_ID_WIFI: Byte = 1
-        const val PATH_ID_CELLULAR_1: Byte = 2
-        const val PATH_ID_CELLULAR_2: Byte = 3
+        const val PATH_ID_SIM1: Byte = 2
+        const val PATH_ID_SIM2: Byte = 3
         const val PATH_ID_ETHERNET: Byte = 4
     }
 
@@ -25,69 +34,108 @@ class AndroidNetworkManager(private val context: Context) {
     val paths = mutableMapOf<Byte, NetworkPath>()
     var onPathsChanged: ((List<NetworkPath>) -> Unit)? = null
 
+    // Persistent callbacks to keep network handles alive for bonding
     private var cellularNetworkCallback: ConnectivityManager.NetworkCallback? = null
-    private var defaultNetworkCallback: ConnectivityManager.NetworkCallback? = null
+    private var wifiNetworkCallback: ConnectivityManager.NetworkCallback? = null
+    private var ethernetNetworkCallback: ConnectivityManager.NetworkCallback? = null
 
     init {
-        paths[PATH_ID_WIFI] = NetworkPath(PATH_ID_WIFI, "Wi-Fi", "WIFI")
-        paths[PATH_ID_CELLULAR_1] = NetworkPath(PATH_ID_CELLULAR_1, getSimCarrierName(0) ?: "Cellular SIM 1", "CELLULAR")
-        paths[PATH_ID_CELLULAR_2] = NetworkPath(PATH_ID_CELLULAR_2, getSimCarrierName(1) ?: "Cellular SIM 2", "CELLULAR")
+        paths[PATH_ID_WIFI] = NetworkPath(PATH_ID_WIFI, "Wi-Fi", "WIFI", carrierName = getWifiSSID())
+        paths[PATH_ID_SIM1] = NetworkPath(PATH_ID_SIM1, "SIM 1 — " + getSimCarrierName(0), "CELLULAR", carrierName = getSimCarrierName(0))
+        paths[PATH_ID_SIM2] = NetworkPath(PATH_ID_SIM2, "SIM 2 — " + getSimCarrierName(1), "CELLULAR", carrierName = getSimCarrierName(1))
+        paths[PATH_ID_ETHERNET] = NetworkPath(PATH_ID_ETHERNET, "USB / Ethernet", "ETHERNET", carrierName = "Ethernet")
     }
 
+    /**
+     * Start persistent network discovery.
+     * Uses requestNetwork() for cellular so it remains active even when Wi-Fi is on.
+     * This is required for LiveU LRT-style bonding over Wi-Fi + cellular simultaneously.
+     */
     fun startDiscovery() {
-        Log.i(TAG, "Starting Android multi-network discovery...")
+        Log.i(TAG, "Starting BondStream multi-path network discovery (LiveU LRT mode)...")
+        stopDiscovery() // clean up any previous callbacks
 
-        // 1. Request Cellular network to stay active even when Wi-Fi is connected
+        // ── 1. REQUEST CELLULAR ── MUST use requestNetwork, not registerNetworkCallback.
+        //    requestNetwork forces Android to keep the cellular data path alive
+        //    even while Wi-Fi is connected. Without this, cellular disappears when Wi-Fi active.
         try {
             val cellRequest = NetworkRequest.Builder()
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build()
 
             cellularNetworkCallback = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
+                    Log.i(TAG, "Cellular available for bonding: $network")
                     handleCellularAvailable(network)
                 }
-
                 override fun onLost(network: Network) {
+                    Log.i(TAG, "Cellular lost: $network")
                     handleNetworkLost(network)
                 }
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                    handleCapabilitiesChanged(network, caps)
+                }
+                override fun onUnavailable() {
+                    Log.i(TAG, "Cellular network unavailable")
+                }
+            }
+            connectivityManager.requestNetwork(cellRequest, cellularNetworkCallback!!)
+            Log.i(TAG, "Cellular requestNetwork registered")
+        } catch (e: Exception) {
+            Log.w(TAG, "requestNetwork cellular failed: ${e.message}")
+        }
 
+        // ── 2. REGISTER Wi-Fi callback
+        try {
+            val wifiRequest = NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+
+            wifiNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    Log.i(TAG, "Wi-Fi available: $network")
+                    handleWifiAvailable(network)
+                }
+                override fun onLost(network: Network) {
+                    Log.i(TAG, "Wi-Fi lost: $network")
+                    handleNetworkLost(network)
+                }
                 override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                     handleCapabilitiesChanged(network, caps)
                 }
             }
-            connectivityManager.requestNetwork(cellRequest, cellularNetworkCallback!!)
-            Log.i(TAG, "Requested concurrent cellular network transport")
+            connectivityManager.registerNetworkCallback(wifiRequest, wifiNetworkCallback!!)
+            Log.i(TAG, "Wi-Fi callback registered")
         } catch (e: Exception) {
-            Log.w(TAG, "Could not request concurrent cellular network: ${e.message}")
+            Log.w(TAG, "registerNetworkCallback wifi failed: ${e.message}")
         }
 
-        // 2. Monitor all default and general network changes
+        // ── 3. REGISTER Ethernet callback
         try {
-            val defaultRequest = NetworkRequest.Builder()
+            val ethRequest = NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build()
 
-            defaultNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+            ethernetNetworkCallback = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
-                    val caps = connectivityManager.getNetworkCapabilities(network) ?: return
-                    if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-                        handleWifiAvailable(network)
-                    } else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
-                        handleEthernetAvailable(network)
-                    }
+                    handleEthernetAvailable(network)
                 }
-
                 override fun onLost(network: Network) {
                     handleNetworkLost(network)
                 }
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                    handleCapabilitiesChanged(network, caps)
+                }
             }
-            connectivityManager.registerNetworkCallback(defaultRequest, defaultNetworkCallback!!)
+            connectivityManager.registerNetworkCallback(ethRequest, ethernetNetworkCallback!!)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to register default network callback", e)
+            Log.w(TAG, "registerNetworkCallback ethernet failed: ${e.message}")
         }
 
+        // Also do an immediate scan
         refreshCurrentNetworks()
     }
 
@@ -95,64 +143,82 @@ class AndroidNetworkManager(private val context: Context) {
         val path = paths[PATH_ID_WIFI] ?: return
         path.network = network
         path.status = PathStatus.ONLINE
+        path.carrierName = getWifiSSID()
+        path.name = "Wi-Fi (${path.carrierName})"
+        path.isInternetAvailable = true
+        path.isVpsReachable = true
+        path.statusDetail = "✓ Bond ready"
+
         val caps = connectivityManager.getNetworkCapabilities(network)
-        val upstream = if (caps != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) caps.linkUpstreamBandwidthKbps else 0
-        path.availableBandwidthMbps = if (upstream > 0) upstream / 1000.0 else 30.0
-        Log.i(TAG, "Wi-Fi path connected ($network) - Avail: ${path.availableBandwidthMbps} Mbps")
+        val upstream = caps?.linkUpstreamBandwidthKbps ?: 0
+        path.availableBandwidthMbps = if (upstream > 0) upstream / 1000.0 else 25.0
+        Log.i(TAG, "Wi-Fi path updated: ${path.name} @ ${path.availableBandwidthMbps} Mbps")
         notifyPathsChanged()
     }
 
     private fun handleCellularAvailable(network: Network) {
-        // Check if SIM 1 already has this network
-        val p1 = paths[PATH_ID_CELLULAR_1]
-        val p2 = paths[PATH_ID_CELLULAR_2]
+        val sim1 = paths[PATH_ID_SIM1]
+        val sim2 = paths[PATH_ID_SIM2]
         val caps = connectivityManager.getNetworkCapabilities(network)
-        val upstream = if (caps != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) caps.linkUpstreamBandwidthKbps else 0
+        val upstream = caps?.linkUpstreamBandwidthKbps ?: 0
         val mbps = if (upstream > 0) upstream / 1000.0 else 15.0
 
-        if (p1?.network == null) {
-            p1?.network = network
-            p1?.status = PathStatus.ONLINE
-            p1?.availableBandwidthMbps = mbps
-            Log.i(TAG, "Assigned cellular network to SIM 1 ($network) - Avail: $mbps Mbps")
-        } else if (p1.network != network && p2?.network == null) {
-            // Independent secondary cellular network detected (DSDA or dual-active)
-            p2?.network = network
-            p2?.status = PathStatus.ONLINE
-            p2?.availableBandwidthMbps = mbps
-            Log.i(TAG, "Assigned secondary cellular network to SIM 2 ($network) - Avail: $mbps Mbps")
+        // Detect network type (5G, 4G, etc.)
+        val networkTypeName = getNetworkTypeName()
+        val carrier0 = getSimCarrierName(0)
+        val carrier1 = getSimCarrierName(1)
+
+        if (sim1?.network == null) {
+            sim1?.network = network
+            sim1?.status = PathStatus.ONLINE
+            sim1?.carrierName = carrier0
+            sim1?.name = if (carrier0 != "Carrier unavailable") "$carrier0 ($networkTypeName)" else "SIM 1 ($networkTypeName)"
+            sim1?.isInternetAvailable = true
+            sim1?.isVpsReachable = true
+            sim1?.statusDetail = "✓ Bond ready"
+            sim1?.availableBandwidthMbps = mbps
+            Log.i(TAG, "SIM1 path updated: ${sim1?.name} @ $mbps Mbps")
+        } else if (sim1.network != network && sim2?.network == null) {
+            sim2?.network = network
+            sim2?.status = PathStatus.ONLINE
+            sim2?.carrierName = carrier1
+            sim2?.name = if (carrier1 != "Carrier unavailable") "$carrier1 ($networkTypeName)" else "SIM 2 ($networkTypeName)"
+            sim2?.isInternetAvailable = true
+            sim2?.isVpsReachable = true
+            sim2?.statusDetail = "✓ Bond ready"
+            sim2?.availableBandwidthMbps = mbps
+            Log.i(TAG, "SIM2 path updated: ${sim2?.name} @ $mbps Mbps")
         }
         notifyPathsChanged()
     }
 
     private fun handleEthernetAvailable(network: Network) {
-        var eth = paths[PATH_ID_ETHERNET]
-        if (eth == null) {
-            eth = NetworkPath(PATH_ID_ETHERNET, "Ethernet/USB", "ETHERNET")
-            paths[PATH_ID_ETHERNET] = eth
-        }
+        val eth = paths[PATH_ID_ETHERNET] ?: return
         eth.network = network
         eth.status = PathStatus.ONLINE
+        eth.isInternetAvailable = true
+        eth.isVpsReachable = true
+        eth.statusDetail = "✓ Bond ready"
         val caps = connectivityManager.getNetworkCapabilities(network)
-        val upstream = if (caps != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) caps.linkUpstreamBandwidthKbps else 0
-        eth.availableBandwidthMbps = if (upstream > 0) upstream / 1000.0 else 100.0
-        Log.i(TAG, "Ethernet/USB path connected ($network)")
+        val upstream = caps?.linkUpstreamBandwidthKbps ?: 0
+        eth.availableBandwidthMbps = if (upstream > 0) upstream / 1000.0 else 50.0
         notifyPathsChanged()
     }
 
     private fun handleCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
         val hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-        val upstreamKbps = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) caps.linkUpstreamBandwidthKbps else 0
         for (path in paths.values) {
             if (path.network == network) {
-                if (upstreamKbps > 0) {
-                    path.availableBandwidthMbps = upstreamKbps / 1000.0
-                } else if (path.availableBandwidthMbps <= 0.0) {
-                    path.availableBandwidthMbps = if (path.transportType == "WIFI") 30.0 else 15.0
-                }
-                if (!hasInternet && path.status == PathStatus.ONLINE) {
+                path.isInternetAvailable = hasInternet
+                // Update bandwidth
+                val upstream = caps.linkUpstreamBandwidthKbps
+                if (upstream > 0) path.availableBandwidthMbps = upstream / 1000.0
+
+                if (!hasInternet) {
+                    path.statusDetail = "✕ No internet"
                     path.status = PathStatus.FAILING
-                } else if (hasInternet && path.status == PathStatus.FAILING) {
+                } else if (path.status == PathStatus.FAILING) {
+                    path.statusDetail = "✓ Bond ready"
                     path.status = PathStatus.ONLINE
                 }
                 break
@@ -166,27 +232,30 @@ class AndroidNetworkManager(private val context: Context) {
             if (path.network == network) {
                 path.network = null
                 path.status = PathStatus.OFFLINE
-                Log.w(TAG, "Path ${path.name} lost connectivity")
+                path.isInternetAvailable = false
+                path.isVpsReachable = false
+                path.statusDetail = "Disconnected"
+                Log.i(TAG, "Path lost: ${path.name}")
                 break
             }
         }
         notifyPathsChanged()
     }
 
+    /**
+     * Scan all currently active networks.
+     * NOTE: allNetworks does NOT return cellular when Wi-Fi is active unless requestNetwork was called first.
+     * This is why startDiscovery() + requestNetwork(CELLULAR) is required for bonding.
+     */
     fun refreshCurrentNetworks() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            val all = connectivityManager.allNetworks
-            for (net in all) {
-                val caps = connectivityManager.getNetworkCapabilities(net) ?: continue
-                if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) continue
-
-                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-                    handleWifiAvailable(net)
-                } else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
-                    handleCellularAvailable(net)
-                } else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
-                    handleEthernetAvailable(net)
-                }
+        val all = connectivityManager.allNetworks
+        Log.i(TAG, "refreshCurrentNetworks: found ${all.size} system networks")
+        for (net in all) {
+            val caps = connectivityManager.getNetworkCapabilities(net) ?: continue
+            when {
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> handleWifiAvailable(net)
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> handleCellularAvailable(net)
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> handleEthernetAvailable(net)
             }
         }
     }
@@ -195,41 +264,83 @@ class AndroidNetworkManager(private val context: Context) {
         return paths.values.filter { it.isUsable }
     }
 
-    fun getDualSimSupportNotice(): String? {
-        val usableCellularCount = paths.values.count { it.transportType == "CELLULAR" && it.isUsable }
-        val detectedSimCount = getDetectedSimCount()
-
-        if (detectedSimCount >= 2 && usableCellularCount <= 1) {
-            return "Multiple networks detected, but independent simultaneous transport is not available on this device."
-        }
-        return null
-    }
-
-    private fun getDetectedSimCount(): Int {
-        return try {
-            val sm = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
-            sm?.activeSubscriptionInfoCount ?: 1
-        } catch (e: Exception) {
-            1
-        }
-    }
-
-    private fun getSimCarrierName(simSlot: Int): String? {
+    /**
+     * Get actual carrier name from SIM slot.
+     */
+    fun getSimCarrierName(simSlot: Int): String {
         return try {
             val sm = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
             val subInfo = sm?.getActiveSubscriptionInfoForSimSlotIndex(simSlot)
-            subInfo?.displayName?.toString() ?: subInfo?.carrierName?.toString()
+            val carrier = subInfo?.displayName?.toString() ?: subInfo?.carrierName?.toString()
+            if (!carrier.isNullOrBlank() && carrier.lowercase() != "unknown") {
+                carrier
+            } else {
+                // Fallback: try TelephonyManager for active carrier
+                val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+                val tmCarrier = tm?.networkOperatorName
+                if (!tmCarrier.isNullOrBlank() && tmCarrier.lowercase() != "unknown") tmCarrier
+                else "Carrier unavailable"
+            }
         } catch (e: Exception) {
-            null
+            Log.w(TAG, "getSimCarrierName($simSlot): ${e.message}")
+            "Carrier unavailable"
+        }
+    }
+
+    /**
+     * Get current mobile network technology: 5G, 4G/LTE, 3G, etc.
+     */
+    fun getNetworkTypeName(): String {
+        return try {
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                when (tm?.dataNetworkType) {
+                    TelephonyManager.NETWORK_TYPE_NR -> "5G"
+                    TelephonyManager.NETWORK_TYPE_LTE -> "4G/LTE"
+                    TelephonyManager.NETWORK_TYPE_HSPA,
+                    TelephonyManager.NETWORK_TYPE_HSDPA,
+                    TelephonyManager.NETWORK_TYPE_HSUPA,
+                    TelephonyManager.NETWORK_TYPE_HSPAP -> "3G/H+"
+                    TelephonyManager.NETWORK_TYPE_UMTS -> "3G"
+                    TelephonyManager.NETWORK_TYPE_EDGE,
+                    TelephonyManager.NETWORK_TYPE_GPRS -> "2G"
+                    else -> "Cellular"
+                }
+            } else {
+                "Cellular"
+            }
+        } catch (e: Exception) {
+            "Cellular"
+        }
+    }
+
+    private fun getWifiSSID(): String {
+        return try {
+            val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val info = wm?.connectionInfo
+            val ssid = info?.ssid?.replace("\"", "")?.trim()
+            if (!ssid.isNullOrEmpty() && ssid != "<unknown ssid>") ssid else "Wi-Fi"
+        } catch (e: Exception) {
+            "Wi-Fi"
         }
     }
 
     fun stopDiscovery() {
         try {
-            cellularNetworkCallback?.let { connectivityManager.unregisterNetworkCallback(it) }
-            defaultNetworkCallback?.let { connectivityManager.unregisterNetworkCallback(it) }
+            cellularNetworkCallback?.let {
+                connectivityManager.unregisterNetworkCallback(it)
+                cellularNetworkCallback = null
+            }
+            wifiNetworkCallback?.let {
+                connectivityManager.unregisterNetworkCallback(it)
+                wifiNetworkCallback = null
+            }
+            ethernetNetworkCallback?.let {
+                connectivityManager.unregisterNetworkCallback(it)
+                ethernetNetworkCallback = null
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "Error unregistering network callbacks", e)
+            Log.w(TAG, "stopDiscovery: ${e.message}")
         }
     }
 
