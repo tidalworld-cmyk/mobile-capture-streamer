@@ -94,8 +94,16 @@ class BondPathClient(
     }
 
     fun sendPacket(packet: BondPacket): Boolean {
-        val s = socket ?: return false
-        val dest = serverAddress ?: return false
+        var s = socket
+        var dest = serverAddress
+        if (s == null || dest == null) {
+            val deadline = System.currentTimeMillis() + 300
+            while ((socket == null || serverAddress == null) && System.currentTimeMillis() < deadline) {
+                try { Thread.sleep(10) } catch (_: Exception) {}
+            }
+            s = socket ?: return false
+            dest = serverAddress ?: return false
+        }
 
         return try {
             val bytes = packet.serialize()
