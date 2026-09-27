@@ -1702,6 +1702,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
             val host = etBondingHost.text.toString().trim().ifEmpty { StreamConfig.DEFAULT_VPS_HOST }
             val port = etBondingPort.text.toString().toIntOrNull() ?: StreamConfig.DEFAULT_VPS_PORT
+            val token = etStreamKey.text.toString().trim()
             val activeSession = bondSession ?: com.streamezy.capture.bonding.BondSession(this, host, port, token).also { newSession ->
                 // Share live discovered paths from previewNetworkManager so CHECK CONNECTIONS sees all detected paths
                 previewNetworkManager?.paths?.let { livePaths ->
