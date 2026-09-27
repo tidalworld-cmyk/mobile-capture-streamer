@@ -32,7 +32,7 @@ class OnlineUpdateManager(private val context: Context) {
 
     companion object {
         private const val TAG = "OnlineUpdateManager"
-        const val DEFAULT_VERSION = "2.0.5"
+        const val DEFAULT_VERSION = "3.2.1"
         const val UPDATE_MANIFEST_URL = "https://srv1990205.hstgr.cloud/update/version.json"
         private const val CONNECT_TIMEOUT_MS = 8000
         private const val READ_TIMEOUT_MS = 12000
