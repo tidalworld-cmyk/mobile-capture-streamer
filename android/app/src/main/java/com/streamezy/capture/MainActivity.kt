@@ -1738,6 +1738,58 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             }
         }
 
+        val btnUpdateConfig = dialogView.findViewById<Button>(R.id.btnUpdateConfig)
+        val tvUpdateStatus = dialogView.findViewById<TextView>(R.id.tvUpdateStatus)
+
+        btnUpdateConfig?.setOnClickListener {
+            btnUpdateConfig.isEnabled = false
+            btnUpdateConfig.text = "UPDATING..."
+            tvUpdateStatus?.visibility = View.VISIBLE
+            tvUpdateStatus?.text = "Checking for updated files..."
+
+            onlineUpdateManager.checkAndUpdateAsync(
+                onStatusUpdate = { msg ->
+                    runOnUiThread {
+                        tvUpdateStatus?.text = msg
+                    }
+                },
+                onVersionUpdated = { newVer, _ ->
+                    runOnUiThread {
+                        streamConfig.loadRemoteConfigOverrides()
+                        tvAppVersion.text = "StreamEzy v$newVer"
+                    }
+                },
+                onComplete = { success, msg, _ ->
+                    runOnUiThread {
+                        btnUpdateConfig.isEnabled = true
+                        btnUpdateConfig.text = "UPDATE & REFRESH"
+                        tvUpdateStatus?.text = msg
+
+                        // Reload remote config overrides into streamConfig and prefs
+                        streamConfig.loadRemoteConfigOverrides()
+
+                        // Refresh all UI fields in the settings dialog
+                        etRtmpUrl.setText(streamConfig.rtmpUrl)
+                        etStreamKey.setText(streamConfig.streamKey)
+                        etBondingHost.setText(streamConfig.bondingServerHost)
+                        etBondingPort.setText(streamConfig.bondingServerPort.toString())
+                        switchBonding.isChecked = streamConfig.isBondingEnabled
+                        tempRatio = streamConfig.selectedAspectRatio
+                        tempBitrate = streamConfig.videoBitrate
+                        updateRatioUI()
+                        updateBitrateUI()
+
+                        // Refresh MainActivity header and previews
+                        tvAppVersion.text = "StreamEzy v${onlineUpdateManager.getActiveVersion()}"
+                        updateStatsDisplay()
+                        updateNetworkStatusPreview()
+
+                        Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            )
+        }
+
         btnSave.setOnClickListener {
             streamConfig.rtmpUrl = etRtmpUrl.text.toString().trim().ifEmpty { StreamConfig.DEFAULT_RTMP_URL }
             streamConfig.streamKey = etStreamKey.text.toString().trim()

@@ -84,28 +84,43 @@ class OnlineUpdateManager(private val context: Context) {
      */
     fun checkAndUpdateAsync(
         onStatusUpdate: ((String) -> Unit)? = null,
-        onVersionUpdated: ((newVersion: String, updatedFiles: List<String>) -> Unit)? = null
+        onVersionUpdated: ((newVersion: String, updatedFiles: List<String>) -> Unit)? = null,
+        onComplete: ((success: Boolean, message: String, updatedFiles: List<String>) -> Unit)? = null
     ) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                performUpdateCheck(onStatusUpdate, onVersionUpdated)
+                performUpdateCheck(onStatusUpdate, onVersionUpdated, onComplete)
             } catch (e: Exception) {
                 Log.w(TAG, "Online update check skipped (network unavailable or server offline): ${e.message}")
+                notifyMain {
+                    onComplete?.invoke(false, "Update check failed: ${e.message}", emptyList())
+                }
             }
         }
     }
 
     private suspend fun performUpdateCheck(
         onStatusUpdate: ((String) -> Unit)?,
-        onVersionUpdated: ((newVersion: String, updatedFiles: List<String>) -> Unit)?
+        onVersionUpdated: ((newVersion: String, updatedFiles: List<String>) -> Unit)?,
+        onComplete: ((success: Boolean, message: String, updatedFiles: List<String>) -> Unit)?
     ) = withContext(Dispatchers.IO) {
         Log.i(TAG, "Checking online update manifest at $UPDATE_MANIFEST_URL...")
 
-        val manifestString = fetchUrlContent(UPDATE_MANIFEST_URL) ?: return@withContext
+        val manifestString = fetchUrlContent(UPDATE_MANIFEST_URL)
+        if (manifestString == null) {
+            notifyMain {
+                onComplete?.invoke(false, "Update server unreachable", emptyList())
+            }
+            return@withContext
+        }
+
         val manifestJson = try {
             JSONObject(manifestString)
         } catch (e: Exception) {
             Log.e(TAG, "Invalid manifest JSON", e)
+            notifyMain {
+                onComplete?.invoke(false, "Invalid update manifest from server", emptyList())
+            }
             return@withContext
         }
 
@@ -116,6 +131,9 @@ class OnlineUpdateManager(private val context: Context) {
         Log.i(TAG, "Current local version: $currentVersion | Remote version: $remoteVersion")
 
         if (remoteVersion.isEmpty()) {
+            notifyMain {
+                onComplete?.invoke(false, "No version specified in manifest", emptyList())
+            }
             return@withContext
         }
 
@@ -147,6 +165,9 @@ class OnlineUpdateManager(private val context: Context) {
                 }
             }
             Log.i(TAG, "All files up to date (version $remoteVersion). No downloads needed.")
+            notifyMain {
+                onComplete?.invoke(true, "Files up to date (v$remoteVersion)", emptyList())
+            }
             return@withContext
         }
 
@@ -171,6 +192,7 @@ class OnlineUpdateManager(private val context: Context) {
                 cleanDir(tempDir)
                 notifyMain {
                     onStatusUpdate?.invoke("Update verification failed. Using existing files.")
+                    onComplete?.invoke(false, "Integrity check failed for ${task.path}", emptyList())
                 }
                 return@withContext
             }
@@ -209,6 +231,7 @@ class OnlineUpdateManager(private val context: Context) {
         notifyMain {
             onStatusUpdate?.invoke("Update completed (v$remoteVersion)")
             onVersionUpdated?.invoke(remoteVersion, updatedFileNames)
+            onComplete?.invoke(true, "Updated to v$remoteVersion (${updatedFileNames.size} files)", updatedFileNames)
         }
     }
 

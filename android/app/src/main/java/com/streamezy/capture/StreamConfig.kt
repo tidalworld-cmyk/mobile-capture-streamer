@@ -22,7 +22,25 @@ class StreamConfig(private val context: Context) {
             val cfgFile = updateMgr.getActiveFile("stream_config.json")
             if (cfgFile != null && cfgFile.exists()) {
                 val jsonStr = cfgFile.readText()
-                remoteOverrides = JSONObject(jsonStr)
+                val json = JSONObject(jsonStr)
+                remoteOverrides = json
+
+                val editor = prefs.edit()
+                if (json.has("rtmp_url")) editor.putString("rtmp_url", json.getString("rtmp_url").trim())
+                if (json.has("stream_key")) editor.putString("stream_key", json.getString("stream_key").trim())
+                if (json.has("bonding_server_host")) editor.putString("bonding_server_host", json.getString("bonding_server_host").trim())
+                if (json.has("bonding_server_port")) editor.putInt("bonding_server_port", json.getInt("bonding_server_port"))
+                if (json.has("default_bitrate")) editor.putInt("video_bitrate", json.getInt("default_bitrate").coerceAtMost(MAX_GLOBAL_STREAM_BITRATE))
+                if (json.has("video_bitrate")) editor.putInt("video_bitrate", json.getInt("video_bitrate").coerceAtMost(MAX_GLOBAL_STREAM_BITRATE))
+                if (json.has("aspect_ratio")) editor.putString("selected_aspect_ratio", json.getString("aspect_ratio"))
+                if (json.has("selected_aspect_ratio")) editor.putString("selected_aspect_ratio", json.getString("selected_aspect_ratio"))
+                if (json.has("bonding_enabled")) editor.putBoolean("bonding_enabled", json.getBoolean("bonding_enabled"))
+                if (json.has("bonding_mode")) editor.putString("bonding_mode", json.getString("bonding_mode"))
+                if (json.has("bonding_playout_delay_ms")) editor.putFloat("bonding_playout_delay_ms", json.getDouble("bonding_playout_delay_ms").toFloat())
+                if (json.has("bonding_enable_arq")) editor.putBoolean("bonding_enable_arq", json.getBoolean("bonding_enable_arq"))
+                if (json.has("bonding_enable_fec")) editor.putBoolean("bonding_enable_fec", json.getBoolean("bonding_enable_fec"))
+                if (json.has("bonding_fec_block_size")) editor.putInt("bonding_fec_block_size", json.getInt("bonding_fec_block_size"))
+                editor.apply()
             }
         } catch (_: Exception) {}
     }

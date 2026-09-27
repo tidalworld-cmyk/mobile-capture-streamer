@@ -30,6 +30,28 @@
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
 
+        <!-- Top Update Button -->
+        <Button
+            android:id="@+id/btnUpdateConfig"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
+            android:layout_marginTop="12dp"
+            android:backgroundTint="@color/accent_blue"
+            android:text="UPDATE &amp; REFRESH"
+            android:textColor="@color/white"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            app:cornerRadius="6dp" />
+
+        <TextView
+            android:id="@+id/tvUpdateStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp"
+            android:visibility="gone" />
+
         <!-- RTMP Server URL -->
         <TextView
             android:layout_width="wrap_content"
