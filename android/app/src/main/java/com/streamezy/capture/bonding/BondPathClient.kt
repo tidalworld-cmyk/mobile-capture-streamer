@@ -34,44 +34,59 @@ class BondPathClient(
     fun start() {
         if (isRunning.getAndSet(true)) return
 
-        try {
-            serverAddress = InetAddress.getByName(serverHost)
-            socket = DatagramSocket()
+        Thread({
+            try {
+                // Background thread for DNS resolution and socket creation (prevents NetworkOnMainThreadException)
+                serverAddress = try {
+                    if (path.network != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        path.network!!.getByName(serverHost)
+                    } else {
+                        InetAddress.getByName(serverHost)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "DNS resolution failed for $serverHost on ${path.name}, falling back to static IP 187.53.143.47")
+                    InetAddress.getByName("187.53.143.47")
+                }
 
-            val net = path.network
-            if (net != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-                net.bindSocket(socket)
-                Log.i(TAG, "Socket successfully bound to Android Network ${path.name} ($net)")
-            }
+                socket = DatagramSocket()
 
-            path.status = PathStatus.CONNECTING
+                val net = path.network
+                if (net != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                    net.bindSocket(socket)
+                    Log.i(TAG, "Socket successfully bound to Android Network ${path.name} ($net)")
+                }
 
-            // Send HELLO packet with authentication token and LiveU playout delay
-            val helloPayload = if (authToken.isNotBlank()) {
-                "{\"token\":\"$authToken\",\"client_name\":\"Android-${path.name}\",\"playout_delay_ms\":$playoutDelayMs}".toByteArray()
-            } else {
-                "{\"client_name\":\"Android-${path.name}\",\"playout_delay_ms\":$playoutDelayMs}".toByteArray()
-            }
+                path.lastHeartbeatTimestamp = System.currentTimeMillis()
+                // Retain ONLINE status from AndroidNetworkManager so bonding scheduler immediately sends data
+                path.status = PathStatus.ONLINE
 
-            sendPacket(
-                BondPacket(
-                    packetType = PacketType.HELLO,
-                    pathId = path.pathId,
-                    sessionId = sessionId,
-                    payload = helloPayload
+                // Send HELLO packet with authentication token and LiveU playout delay
+                val helloPayload = if (authToken.isNotBlank()) {
+                    "{\"token\":\"$authToken\",\"client_name\":\"Android-${path.name}\",\"playout_delay_ms\":$playoutDelayMs}".toByteArray()
+                } else {
+                    "{\"client_name\":\"Android-${path.name}\",\"playout_delay_ms\":$playoutDelayMs}".toByteArray()
+                }
+
+                sendPacket(
+                    BondPacket(
+                        packetType = PacketType.HELLO,
+                        pathId = path.pathId,
+                        sessionId = sessionId,
+                        payload = helloPayload
+                    )
                 )
-            )
 
-            // Start UDP receive loop
-            receiverThread = Thread({ receiveLoop() }, "BondRx-${path.name}").apply { start() }
-            // Start periodic heartbeat loop
-            heartbeatThread = Thread({ heartbeatLoop() }, "BondHb-${path.name}").apply { start() }
+                // Start UDP receive loop
+                receiverThread = Thread({ receiveLoop() }, "BondRx-${path.name}").apply { start() }
+                // Start periodic heartbeat loop
+                heartbeatThread = Thread({ heartbeatLoop() }, "BondHb-${path.name}").apply { start() }
 
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start path client for ${path.name}", e)
-            path.status = PathStatus.OFFLINE
-            stop()
-        }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start path client for ${path.name}", e)
+                path.status = PathStatus.OFFLINE
+                stop()
+            }
+        }, "BondClientInit-${path.name}").start()
     }
 
     fun sendPacket(packet: BondPacket): Boolean {
@@ -110,10 +125,13 @@ class BondPathClient(
                     path.status = PathStatus.ONLINE
                     onPacketAcked?.invoke(bondPkt)
                 } else if (bondPkt.packetType == PacketType.DOWNLINK) {
+                    path.lastHeartbeatTimestamp = System.currentTimeMillis()
+                    if (path.status == PathStatus.FAILING) path.status = PathStatus.ONLINE
                     if (bondPkt.payload.isNotEmpty()) {
                         onDownlinkReceived?.invoke(bondPkt.payload)
                     }
                 } else if (bondPkt.packetType == PacketType.NACK) {
+                    path.lastHeartbeatTimestamp = System.currentTimeMillis()
                     val missingSeqs = BondPacket.decodeNackPayload(bondPkt.payload)
                     if (missingSeqs.isNotEmpty()) {
                         Log.d(TAG, "Received NACK on ${path.name} for ${missingSeqs.size} missing packets: $missingSeqs")
@@ -149,9 +167,9 @@ class BondPathClient(
                     )
                 )
 
-                // Timeout check
+                // Timeout check: Allow 6 seconds grace period for cellular / Wi-Fi jitter before failing
                 val idle = System.currentTimeMillis() - path.lastHeartbeatTimestamp
-                if (idle > 3000 && path.status == PathStatus.ONLINE) {
+                if (idle > 6000 && path.status == PathStatus.ONLINE) {
                     path.status = PathStatus.FAILING
                     Log.w(TAG, "Path ${path.name} heartbeat timeout (idle ${idle}ms)")
                 }

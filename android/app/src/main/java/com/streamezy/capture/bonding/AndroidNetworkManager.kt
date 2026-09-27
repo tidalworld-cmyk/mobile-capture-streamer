@@ -40,6 +40,9 @@ class AndroidNetworkManager(private val context: Context) {
     private var wifiNetworkCallback: ConnectivityManager.NetworkCallback? = null
     private var ethernetNetworkCallback: ConnectivityManager.NetworkCallback? = null
 
+    var isDiscoveryRunning = false
+        private set
+
     init {
         paths[PATH_ID_WIFI] = NetworkPath(PATH_ID_WIFI, "Wi-Fi", "WIFI", carrierName = getWifiSSID())
         paths[PATH_ID_SIM1] = NetworkPath(PATH_ID_SIM1, "SIM 1 — " + getSimCarrierName(0), "CELLULAR", carrierName = getSimCarrierName(0))
@@ -53,6 +56,12 @@ class AndroidNetworkManager(private val context: Context) {
      * This is required for LiveU LRT-style bonding over Wi-Fi + cellular simultaneously.
      */
     fun startDiscovery() {
+        if (isDiscoveryRunning) {
+            Log.i(TAG, "BondStream network discovery already active. Refreshing current states...")
+            refreshCurrentNetworks(notify = true)
+            return
+        }
+        isDiscoveryRunning = true
         Log.i(TAG, "Starting BondStream multi-path network discovery (LiveU LRT mode)...")
         stopDiscovery() // clean up any previous callbacks
 
@@ -356,6 +365,7 @@ class AndroidNetworkManager(private val context: Context) {
     }
 
     fun stopDiscovery() {
+        isDiscoveryRunning = false
         try {
             defaultNetworkCallback?.let {
                 connectivityManager.unregisterNetworkCallback(it)

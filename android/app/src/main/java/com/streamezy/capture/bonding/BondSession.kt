@@ -42,7 +42,8 @@ class BondSession(
     var enableArq: Boolean = true,
     var enableRedundancy: Boolean = true,
     var enableFec: Boolean = true,
-    var fecBlockSize: Int = 8
+    var fecBlockSize: Int = 8,
+    val networkManager: AndroidNetworkManager = AndroidNetworkManager(context)
 ) {
     companion object {
         private const val TAG = "BondSession"
@@ -50,7 +51,6 @@ class BondSession(
         const val MAX_GLOBAL_BITRATE_KBPS = 1500 // 1.5 Mbps strict global limit
     }
 
-    val networkManager = AndroidNetworkManager(context)
     private val scheduler = BondScheduler()
     private val pathClients = ConcurrentHashMap<Byte, BondPathClient>()
 
@@ -107,6 +107,8 @@ class BondSession(
             syncPathClients(paths)
         }
         networkManager.startDiscovery()
+        // Immediately sync all currently detected paths from networkManager
+        syncPathClients(networkManager.paths.values.toList())
 
         metricsThread = Thread({
             while (isRunning.get()) {
@@ -419,7 +421,7 @@ class BondSession(
             client.stop()
         }
         pathClients.clear()
-        networkManager.stopDiscovery()
+        // Retain networkManager discovery so network preview continues on home screen
         Log.i(TAG, "BondStream Session $sessionId stopped.")
     }
 }

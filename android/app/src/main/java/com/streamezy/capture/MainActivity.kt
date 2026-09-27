@@ -1236,7 +1236,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                     tvBondingMetrics.text = "Initializing multi-path UDP..."
                 }
 
-                val token = streamConfig.bondingAuthToken.ifBlank { streamConfig.streamKey }
+                val token = streamConfig.bondingAuthToken.ifBlank { streamConfig.streamKey }.ifBlank { "live" }
                 val session = com.streamezy.capture.bonding.BondSession(
                     this,
                     streamConfig.bondingServerHost,
@@ -1246,7 +1246,8 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                     streamConfig.enableArq,
                     streamConfig.enableRedundancy,
                     streamConfig.enableFec,
-                    streamConfig.fecBlockSize
+                    streamConfig.fecBlockSize,
+                    networkManager = previewNetworkManager ?: com.streamezy.capture.bonding.AndroidNetworkManager(this)
                 ).apply {
                     mode = com.streamezy.capture.bonding.BondingMode.ON
                     onRecommendedBitrate = { targetBitrateKbps ->
@@ -1318,10 +1319,15 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
         headerRowBonding.visibility = View.VISIBLE
 
-        val onlinePaths = metrics.paths.filter { it.status == com.streamezy.capture.bonding.PathStatus.ONLINE }
+        val onlinePaths = metrics.paths.filter { 
+            (it.status == com.streamezy.capture.bonding.PathStatus.ONLINE ||
+             it.status == com.streamezy.capture.bonding.PathStatus.RECOVERING ||
+             it.status == com.streamezy.capture.bonding.PathStatus.CONNECTING) &&
+            it.network != null
+        }
         val count = onlinePaths.size
 
-        if (metrics.isBonded) {
+        if (metrics.isBonded || count >= 2) {
             tvBondingBadge.text = "BONDED ($count)"
             tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
         } else if (count > 0) {
@@ -1333,10 +1339,10 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         }
 
         val wifiPath = metrics.paths.firstOrNull { it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_WIFI }
-        val simPath = metrics.paths.firstOrNull { it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM1 || it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM2 }
 
         // Line 1: Wi-Fi live TX metrics
-        if (wifiPath?.status == com.streamezy.capture.bonding.PathStatus.ONLINE) {
+        val isWifiLive = (wifiPath?.status == com.streamezy.capture.bonding.PathStatus.ONLINE || wifiPath?.status == com.streamezy.capture.bonding.PathStatus.CONNECTING) && wifiPath?.network != null
+        if (isWifiLive && wifiPath != null) {
             val ssid = if (wifiPath.carrierName.isNotBlank() && wifiPath.carrierName != "Wi-Fi") wifiPath.carrierName else "Connected"
             tvBondingNetworks.text = String.format("Wi-Fi: %s ● TX: %.1f Mbps (%dms)", ssid, wifiPath.currentUsageMbps, wifiPath.latencyMs)
         } else {
@@ -1347,7 +1353,8 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         val simPaths = metrics.paths.filter { 
             (it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM1 || 
              it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM2) && 
-            it.status == com.streamezy.capture.bonding.PathStatus.ONLINE 
+            (it.status == com.streamezy.capture.bonding.PathStatus.ONLINE || it.status == com.streamezy.capture.bonding.PathStatus.CONNECTING) &&
+            it.network != null
         }
         if (simPaths.isNotEmpty()) {
             val simSummary = simPaths.joinToString(" + ") { p ->
@@ -1702,15 +1709,11 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
             val host = etBondingHost.text.toString().trim().ifEmpty { StreamConfig.DEFAULT_VPS_HOST }
             val port = etBondingPort.text.toString().toIntOrNull() ?: StreamConfig.DEFAULT_VPS_PORT
-            val token = etStreamKey.text.toString().trim()
-            val activeSession = bondSession ?: com.streamezy.capture.bonding.BondSession(this, host, port, token).also { newSession ->
-                // Share live discovered paths from previewNetworkManager so CHECK CONNECTIONS sees all detected paths
-                previewNetworkManager?.paths?.let { livePaths ->
-                    for ((id, path) in livePaths) {
-                        newSession.networkManager.paths[id] = path.copy()
-                    }
-                }
-            }
+            val token = etStreamKey.text.toString().trim().ifEmpty { "live" }
+            val activeSession = bondSession ?: com.streamezy.capture.bonding.BondSession(
+                this, host, port, token,
+                networkManager = previewNetworkManager ?: com.streamezy.capture.bonding.AndroidNetworkManager(this)
+            )
             val testRunner = com.streamezy.capture.bonding.BondTestRunner(activeSession)
 
             testRunner.runCheckConnections { report ->
@@ -1794,17 +1797,16 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             // because Android hides cellular from allNetworks when Wi-Fi is active.
             // requestNetwork(TRANSPORT_CELLULAR) inside startDiscovery() forces Android
             // to expose BOTH Wi-Fi and cellular simultaneously for LiveU LRT-style bonding.
-            val paths = if (bondSession != null) {
-                bondSession!!.networkManager.paths.values.toList()
-            } else if (previewNetworkManager != null) {
-                previewNetworkManager!!.paths.values.toList()
-            } else {
-                val netMgr = com.streamezy.capture.bonding.AndroidNetworkManager(this)
-                netMgr.refreshCurrentNetworks()
-                netMgr.paths.values.toList()
-            }
+            val paths = previewNetworkManager?.paths?.values?.toList()
+                ?: bondSession?.networkManager?.paths?.values?.toList()
+                ?: emptyList()
 
-            val onlinePaths = paths.filter { it.status == com.streamezy.capture.bonding.PathStatus.ONLINE }
+            val onlinePaths = paths.filter { 
+                (it.status == com.streamezy.capture.bonding.PathStatus.ONLINE || 
+                 it.status == com.streamezy.capture.bonding.PathStatus.RECOVERING ||
+                 it.status == com.streamezy.capture.bonding.PathStatus.CONNECTING) && 
+                it.network != null 
+            }
             val onlineCount = onlinePaths.size
             val isBonded = onlineCount >= 2
 
@@ -1850,15 +1852,21 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                     tvStatus.text = "STANDBY (VOICE ONLY)"
                     tvStatus.setBackgroundColor(ContextCompat.getColor(this, R.color.text_secondary))
                 } else {
-                    tvStatus.text = p.status.name
-                    val statusColor = when (p.status) {
-                        com.streamezy.capture.bonding.PathStatus.ONLINE -> R.color.accent_green
-                        com.streamezy.capture.bonding.PathStatus.CONNECTING,
-                        com.streamezy.capture.bonding.PathStatus.RECOVERING -> R.color.accent_blue
-                        com.streamezy.capture.bonding.PathStatus.FAILING -> R.color.accent_orange
-                        else -> R.color.text_secondary
+                    val isLiveOnline = (p.status == com.streamezy.capture.bonding.PathStatus.ONLINE || p.status == com.streamezy.capture.bonding.PathStatus.CONNECTING) && p.network != null
+                    if (isLiveOnline) {
+                        tvStatus.text = "ONLINE"
+                        tvStatus.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
+                    } else {
+                        tvStatus.text = p.status.name
+                        val statusColor = when (p.status) {
+                            com.streamezy.capture.bonding.PathStatus.ONLINE -> R.color.accent_green
+                            com.streamezy.capture.bonding.PathStatus.CONNECTING,
+                            com.streamezy.capture.bonding.PathStatus.RECOVERING -> R.color.accent_blue
+                            com.streamezy.capture.bonding.PathStatus.FAILING -> R.color.accent_orange
+                            else -> R.color.text_secondary
+                        }
+                        tvStatus.setBackgroundColor(ContextCompat.getColor(this, statusColor))
                     }
-                    tvStatus.setBackgroundColor(ContextCompat.getColor(this, statusColor))
                 }
 
                 tvAvail.text = String.format("Avail: %.1f Mbps", p.availableBandwidthMbps)
@@ -1883,9 +1891,12 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
             val host = streamConfig.bondingServerHost.trim().ifEmpty { StreamConfig.DEFAULT_VPS_HOST }
             val port = streamConfig.bondingServerPort
-            val token = streamConfig.streamKey.trim()
+            val token = streamConfig.streamKey.trim().ifEmpty { "live" }
 
-            val activeSession = bondSession ?: com.streamezy.capture.bonding.BondSession(this, host, port, token)
+            val activeSession = bondSession ?: com.streamezy.capture.bonding.BondSession(
+                this, host, port, token,
+                networkManager = previewNetworkManager ?: com.streamezy.capture.bonding.AndroidNetworkManager(this)
+            )
             val testRunner = com.streamezy.capture.bonding.BondTestRunner(activeSession)
 
             testRunner.runCheckConnections { report ->
