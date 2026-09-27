@@ -11,8 +11,8 @@ android {
         applicationId "com.streamezy.capture"
         minSdk 23
         targetSdk 34
-        versionCode 9
-        versionName "3.2.3-bonded-lrt"
+        versionCode 10
+        versionName "3.2.4-bonded-lrt"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         ndk {

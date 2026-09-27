@@ -78,7 +78,10 @@ class AndroidNetworkManager(private val context: Context) {
                         }
                     }
                     override fun onLost(network: Network) {
-                        handleNetworkLost(network)
+                        // Do NOT call handleNetworkLost here: Android calls onLost on the default callback
+                        // whenever the default network switches (e.g. from Cellular to Wi-Fi), but the cellular
+                        // network remains fully alive and requested for bonding.
+                        // Dedicated cellularNetworkCallback and wifiNetworkCallback handle actual interface loss.
                     }
                 }
                 connectivityManager.registerDefaultNetworkCallback(defaultNetworkCallback!!)

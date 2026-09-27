@@ -36,16 +36,20 @@ class BondPathClient(
 
         Thread({
             try {
-                // Background thread for DNS resolution and socket creation (prevents NetworkOnMainThreadException)
                 serverAddress = try {
-                    if (path.network != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                        path.network!!.getByName(serverHost)
+                    if (serverHost == "187.53.143.47") {
+                        java.net.InetAddress.getByName("187.53.143.47")
                     } else {
-                        InetAddress.getByName(serverHost)
+                        val addrs = if (path.network != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                            path.network!!.getAllByName(serverHost)
+                        } else {
+                            java.net.InetAddress.getAllByName(serverHost)
+                        }
+                        addrs.firstOrNull { it is java.net.Inet4Address } ?: addrs.firstOrNull() ?: java.net.InetAddress.getByName("187.53.143.47")
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "DNS resolution failed for $serverHost on ${path.name}, falling back to static IP 187.53.143.47")
-                    InetAddress.getByName("187.53.143.47")
+                    Log.w(TAG, "DNS resolution failed for $serverHost on ${path.name}, falling back to static IP 187.53.143.47: ${e.message}")
+                    java.net.InetAddress.getByName("187.53.143.47")
                 }
 
                 socket = DatagramSocket()
