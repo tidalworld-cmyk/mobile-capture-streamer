@@ -1702,9 +1702,14 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
             val host = etBondingHost.text.toString().trim().ifEmpty { StreamConfig.DEFAULT_VPS_HOST }
             val port = etBondingPort.text.toString().toIntOrNull() ?: StreamConfig.DEFAULT_VPS_PORT
-            val token = etStreamKey.text.toString().trim()
-
-            val activeSession = bondSession ?: com.streamezy.capture.bonding.BondSession(this, host, port, token)
+            val activeSession = bondSession ?: com.streamezy.capture.bonding.BondSession(this, host, port, token).also { newSession ->
+                // Share live discovered paths from previewNetworkManager so CHECK CONNECTIONS sees all detected paths
+                previewNetworkManager?.paths?.let { livePaths ->
+                    for ((id, path) in livePaths) {
+                        newSession.networkManager.paths[id] = path.copy()
+                    }
+                }
+            }
             val testRunner = com.streamezy.capture.bonding.BondTestRunner(activeSession)
 
             testRunner.runCheckConnections { report ->
@@ -1840,15 +1845,20 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 val tvLatencyLoss = cardView.findViewById<TextView>(R.id.tvCardLatencyLoss)
 
                 tvName.text = "${p.name} [${p.transportType}]"
-                tvStatus.text = p.status.name
-                val statusColor = when (p.status) {
-                    com.streamezy.capture.bonding.PathStatus.ONLINE -> R.color.accent_green
-                    com.streamezy.capture.bonding.PathStatus.CONNECTING,
-                    com.streamezy.capture.bonding.PathStatus.RECOVERING -> R.color.accent_blue
-                    com.streamezy.capture.bonding.PathStatus.FAILING -> R.color.accent_orange
-                    else -> R.color.text_secondary
+                if (p.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM2 && p.status != com.streamezy.capture.bonding.PathStatus.ONLINE) {
+                    tvStatus.text = "STANDBY (VOICE ONLY)"
+                    tvStatus.setBackgroundColor(ContextCompat.getColor(this, R.color.text_secondary))
+                } else {
+                    tvStatus.text = p.status.name
+                    val statusColor = when (p.status) {
+                        com.streamezy.capture.bonding.PathStatus.ONLINE -> R.color.accent_green
+                        com.streamezy.capture.bonding.PathStatus.CONNECTING,
+                        com.streamezy.capture.bonding.PathStatus.RECOVERING -> R.color.accent_blue
+                        com.streamezy.capture.bonding.PathStatus.FAILING -> R.color.accent_orange
+                        else -> R.color.text_secondary
+                    }
+                    tvStatus.setBackgroundColor(ContextCompat.getColor(this, statusColor))
                 }
-                tvStatus.setBackgroundColor(ContextCompat.getColor(this, statusColor))
 
                 tvAvail.text = String.format("Avail: %.1f Mbps", p.availableBandwidthMbps)
                 tvUsage.text = String.format("TX Usage: %.1f Mbps", p.currentUsageMbps)

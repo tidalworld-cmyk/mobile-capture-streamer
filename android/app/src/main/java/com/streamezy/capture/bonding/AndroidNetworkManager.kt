@@ -35,6 +35,7 @@ class AndroidNetworkManager(private val context: Context) {
     var onPathsChanged: ((List<NetworkPath>) -> Unit)? = null
 
     // Persistent callbacks to keep network handles alive for bonding
+    private var defaultNetworkCallback: ConnectivityManager.NetworkCallback? = null
     private var cellularNetworkCallback: ConnectivityManager.NetworkCallback? = null
     private var wifiNetworkCallback: ConnectivityManager.NetworkCallback? = null
     private var ethernetNetworkCallback: ConnectivityManager.NetworkCallback? = null
@@ -54,6 +55,28 @@ class AndroidNetworkManager(private val context: Context) {
     fun startDiscovery() {
         Log.i(TAG, "Starting BondStream multi-path network discovery (LiveU LRT mode)...")
         stopDiscovery() // clean up any previous callbacks
+
+        // ── 0. REGISTER DEFAULT NETWORK (Instant detection of whatever is currently active)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                defaultNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: Network) {
+                        val caps = connectivityManager.getNetworkCapabilities(network) ?: return
+                        when {
+                            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> handleWifiAvailable(network, true)
+                            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> handleCellularAvailable(network, true)
+                            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> handleEthernetAvailable(network, true)
+                        }
+                    }
+                    override fun onLost(network: Network) {
+                        handleNetworkLost(network)
+                    }
+                }
+                connectivityManager.registerDefaultNetworkCallback(defaultNetworkCallback!!)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "registerDefaultNetworkCallback failed: ${e.message}")
+        }
 
         // ── 1. REQUEST CELLULAR ── MUST use requestNetwork, not registerNetworkCallback.
         //    requestNetwork forces Android to keep the cellular data path alive
@@ -334,6 +357,10 @@ class AndroidNetworkManager(private val context: Context) {
 
     fun stopDiscovery() {
         try {
+            defaultNetworkCallback?.let {
+                connectivityManager.unregisterNetworkCallback(it)
+                defaultNetworkCallback = null
+            }
             cellularNetworkCallback?.let {
                 connectivityManager.unregisterNetworkCallback(it)
                 cellularNetworkCallback = null
