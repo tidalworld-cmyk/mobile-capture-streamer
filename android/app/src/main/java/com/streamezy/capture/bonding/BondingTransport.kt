@@ -36,7 +36,7 @@ class BondingTransport(
      * across active network paths in round-robin sequence (Stage 3 Two-Path Bonding).
      * Returns the count of successfully transmitted packets.
      */
-    fun sendMediaChunk(chunk: ByteArray, flags: Byte = PacketFlags.NONE): Int {
+    fun sendMediaChunk(chunk: ByteArray, flags: Byte = 0): Int {
         if (!isRunning || chunk.isEmpty()) return 0
         val onlineClients = pathClients.filter { it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.CONNECTING }
         if (onlineClients.isEmpty()) return 0
