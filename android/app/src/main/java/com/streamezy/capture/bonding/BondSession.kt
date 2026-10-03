@@ -257,7 +257,7 @@ class BondSession(
         }, "BondMetricsTicker").apply { start() }
     }
 
-    private fun syncPathClients(paths: List<NetworkPath>) {
+    fun syncPathClients(paths: List<NetworkPath> = networkManager.paths.values.toList()) {
         val usablePaths = paths.filter { it.isUsable }
         if (usablePaths.isEmpty()) {
             if (!isReconnecting.getAndSet(true)) {
