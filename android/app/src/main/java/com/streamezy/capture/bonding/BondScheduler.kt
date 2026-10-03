@@ -13,7 +13,7 @@ class BondScheduler {
         val usable = paths.filter { it.isUsable }
         if (usable.isEmpty()) {
             // Zero-drop fallback: never stop broadcast if any network handle exists
-            val fallback = paths.filter { it.network != null && it.status != PathStatus.OFFLINE }
+            val fallback = paths.filter { it.network != null && it.status != PathStatus.FAILED && it.status != PathStatus.OFFLINE }
             if (fallback.isNotEmpty()) return fallback[0]
             return paths.firstOrNull { it.network != null }
         }
@@ -26,7 +26,7 @@ class BondScheduler {
             val rtt = path.latencyMs.coerceAtLeast(10L).toFloat()
             val loss = path.lossRate.coerceIn(0f, 0.9f)
             // Real bandwidth aggregation: Wi-Fi + SIM available bandwidth combined
-            val speed = (if (path.estimatedUploadMbps > 0) path.estimatedUploadMbps else path.availableBandwidthMbps).coerceAtLeast(1.0).toFloat()
+            val speed = (if (path.estimatedUploadMbps > 0) path.estimatedUploadMbps else path.availableBandwidthMbps).coerceAtLeast(0.1).toFloat()
             val jitterPenalty = 1.0f / (1.0f + (path.jitterMs.coerceAtLeast(0L).toFloat() / 25.0f))
 
             // Transport bonus
@@ -38,15 +38,19 @@ class BondScheduler {
                 1.05f
             }
 
-            // Rapid recovery ramp-up to boost broadcast when SIM connects
+            // Section 5 Step 8: Smooth recovery ramp-up (slow-start)
             var ramp = recoveryWeights[path.pathId] ?: 1.0f
             if (ramp < 1.0f) {
-                ramp = (ramp + 0.15f).coerceAtMost(1.0f)
+                ramp = (ramp + 0.05f).coerceAtMost(1.0f)
                 recoveryWeights[path.pathId] = ramp
             }
 
+            // Section 14: Head-of-line blocking prevention for slow paths (e.g. 100 kbps vs 10 Mbps)
+            // Prevent slow path from taking too many consecutive chunks that would stall the reorder buffer
+            val holFactor = if (speed < 0.3f && rtt > 250f) 0.3f else 1.0f
+
             // LiveU LRT Quality score: higher combined bandwidth = higher proportional tickets
-            val qualityScore = (speed / rtt) * (1.0f - loss) * (1.0f - loss) * jitterPenalty * ramp * transportBonus
+            val qualityScore = (speed / rtt) * (1.0f - loss) * (1.0f - loss) * jitterPenalty * ramp * transportBonus * holFactor
             val tickets = (qualityScore * 10).toInt().coerceIn(1, 100)
 
             repeat(tickets) {
@@ -61,8 +65,8 @@ class BondScheduler {
     }
 
     fun onPathRecovered(pathId: Byte) {
-        // Immediate boost: start at 50% capacity and ramp to 100% within moments
-        recoveryWeights[pathId] = 0.50f
+        // Section 5 Step 8: Start at 15% capacity and gradually ramp up to 100%
+        recoveryWeights[pathId] = 0.15f
     }
 
     fun onPathFailed(pathId: Byte) {

@@ -191,6 +191,30 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private lateinit var btnNetworkCenter: ImageButton
     private var previewNetworkManager: com.streamezy.capture.bonding.AndroidNetworkManager? = null
 
+    // All Networks Cut Warning & Countdown Banner
+    private lateinit var cardAllNetworksCutWarning: CardView
+    private lateinit var tvWarningCountdown: TextView
+    private lateinit var btnWarningGoLive: Button
+    private var allNetworksCutCountdown = 10
+    private val allNetworksCutHandler = Handler(Looper.getMainLooper())
+    private var isAllNetworksCutActive = false
+    private val allNetworksCutRunnable = object : Runnable {
+        override fun run() {
+            if (!isStreaming || !isAllNetworksCutActive) return
+            if (allNetworksCutCountdown > 0) {
+                allNetworksCutCountdown--
+                if (::tvWarningCountdown.isInitialized) {
+                    tvWarningCountdown.text = "Buffer holding in memory (${allNetworksCutCountdown}s)... Connect Wi-Fi or turn on SIM."
+                }
+                allNetworksCutHandler.postDelayed(this, 1000)
+            } else {
+                if (::tvWarningCountdown.isInitialized) {
+                    tvWarningCountdown.text = "10s grace window elapsed. Connect Wi-Fi / SIM and tap GO LIVE to resume."
+                }
+            }
+        }
+    }
+
     private enum class ActiveSource { REAR, FRONT, OTG }
     private var currentSource = ActiveSource.REAR
 
@@ -201,6 +225,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
     private var streamStartTime: Long = 0
     private var lastLiveClickTime: Long = 0
     private var smoothedKbps: Long = 0L
+    private var vpsRxBlinkState = false
     private val uptimeHandler = Handler(Looper.getMainLooper())
     private val uptimeRunnable = object : Runnable {
         override fun run() {
@@ -210,6 +235,18 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 val minutes = (elapsed % 3600) / 60
                 val seconds = elapsed % 60
                 tvUptime.text = String.format("%02d:%02d:%02d", hours, minutes, seconds)
+
+                // Blinking red dot indicator confirming VPS is receiving data
+                vpsRxBlinkState = !vpsRxBlinkState
+                val isVpsRx = bondSession?.isVpsReceiving ?: (smoothedKbps > 50)
+                if (isVpsRx) {
+                    val dot = if (vpsRxBlinkState) "🔴" else "⭕"
+                    tvLiveBadge.text = "$dot LIVE"
+                    tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.accent_red))
+                } else {
+                    tvLiveBadge.text = "⚠️ NO VPS RX"
+                    tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.accent_orange))
+                }
 
                 // Dispatch stream telemetry to VPS monitoring
                 if (::telemetryManager.isInitialized) {
@@ -479,14 +516,25 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         tvBondingMetrics = findViewById(R.id.tvBondingMetrics)
         btnNetworkCenter = findViewById(R.id.btnNetworkCenter)
 
+        // All Networks Cut Warning Banner
+        cardAllNetworksCutWarning = findViewById(R.id.cardAllNetworksCutWarning)
+        tvWarningCountdown = findViewById(R.id.tvWarningCountdown)
+        btnWarningGoLive = findViewById(R.id.btnWarningGoLive)
+
         // Persistent preview network manager for concurrent Wi-Fi + Cellular detection
         previewNetworkManager = com.streamezy.capture.bonding.AndroidNetworkManager(this).apply {
-            onPathsChanged = { _ ->
+            onPathsChanged = { paths ->
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed && !isStreaming) {
                         updateNetworkStatusPreview()
                     }
+                    if (paths.any { it.isUsable }) {
+                        dismissNoNetworkWarningDialog()
+                    }
                 }
+            }
+            onNoNetworkAvailable = { paths ->
+                showNoNetworkWarningDialog(paths)
             }
         }
         Thread({
@@ -522,6 +570,10 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
         btnNetworkCenter.setOnClickListener {
             showNetworkCenterDialog()
+        }
+
+        btnWarningGoLive.setOnClickListener {
+            triggerManualNetworkReconnect()
         }
 
         headerRowBonding.setOnClickListener {
@@ -1250,6 +1302,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                     networkManager = previewNetworkManager ?: com.streamezy.capture.bonding.AndroidNetworkManager(this)
                 ).apply {
                     mode = com.streamezy.capture.bonding.BondingMode.ON
+                    networkManager.onNoNetworkAvailable = { paths ->
+                        showNoNetworkWarningDialog(paths)
+                    }
                     onRecommendedBitrate = { targetBitrateKbps ->
                         runOnUiThread {
                             try {
@@ -1263,6 +1318,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                     onMetricsUpdated = { metrics ->
                         runOnUiThread {
                             updateBondingHeaderUI(metrics)
+                            if (metrics.paths.any { it.isUsable }) {
+                                dismissNoNetworkWarningDialog()
+                            }
                             val statusMsg = if (metrics.isBonded) "Bonded: Wi-Fi + 4G/5G Active" else "Streaming: 1 Network Active"
                             com.streamezy.capture.service.BondStreamingService.updateStatus(
                                 this@MainActivity,
@@ -1279,6 +1337,42 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                                 stopLiveStream()
                                 streamConfig.isBondingEnabled = false
                                 startLiveStream()
+                            }
+                        }
+                    }
+                    onBroadcastStopped = { reason ->
+                        runOnUiThread {
+                            Log.w(TAG, "BROADCAST STOPPED ON VPS: $reason")
+                            isStreaming = false
+                            uptimeHandler.removeCallbacks(uptimeRunnable)
+
+                            // Visual Alert: change status badge and button to notify streamer
+                            tvLiveBadge.text = "BROADCAST STOPPED"
+                            tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.accent_red))
+                            btnLive.isEnabled = true
+                            btnLive.text = "RESTART BROADCAST"
+                            btnLive.setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.accent_blue))
+
+                            // Haptic intimation / vibration
+                            try {
+                                val v = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                    v?.vibrate(android.os.VibrationEffect.createOneShot(600, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                                } else {
+                                    v?.vibrate(600)
+                                }
+                            } catch (_: Exception) {}
+
+                            Toast.makeText(this@MainActivity, "⚠️ Broadcast stopped on VPS! Tap RESTART to resume with buffered data.", Toast.LENGTH_LONG).show()
+
+                            // Auto-recover if enabled
+                            if (streamConfig.isAutoFallbackEnabled) {
+                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                    if (!isStreaming) {
+                                        Toast.makeText(this@MainActivity, "Auto-recovering broadcast from buffer...", Toast.LENGTH_SHORT).show()
+                                        startLiveStream()
+                                    }
+                                }, 1500)
                             }
                         }
                     }
@@ -1321,56 +1415,153 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
 
         val onlinePaths = metrics.paths.filter { 
             (it.status == com.streamezy.capture.bonding.PathStatus.ONLINE ||
+             it.status == com.streamezy.capture.bonding.PathStatus.ACTIVE ||
+             it.status == com.streamezy.capture.bonding.PathStatus.HEALTHY ||
              it.status == com.streamezy.capture.bonding.PathStatus.RECOVERING ||
              it.status == com.streamezy.capture.bonding.PathStatus.CONNECTING) &&
             it.network != null
         }
         val count = onlinePaths.size
 
-        if (metrics.isBonded || count >= 2) {
-            tvBondingBadge.text = "BONDED ($count)"
-            tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
+        // All Networks Cut Grace Window & Warning Banner trigger
+        if (count == 0 && isStreaming) {
+            showAllNetworksWarning()
         } else if (count > 0) {
-            tvBondingBadge.text = "1 NET"
+            dismissAllNetworksWarning()
+        }
+
+        val totalActiveSpeed = onlinePaths.sumOf { if (it.currentUsageMbps > 0) it.currentUsageMbps else it.availableBandwidthMbps }
+        val isBonded = metrics.isBonded || count >= 2
+
+        if (isBonded) {
+            tvBondingBadge.text = "⚡ BONDED ($count)"
+            tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
+        } else if (count == 1) {
+            tvBondingBadge.text = "🔗 1 NET"
             tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_blue))
         } else {
-            tvBondingBadge.text = "OFFLINE"
-            tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.text_secondary))
+            tvBondingBadge.text = "⚠️ ALL DOWN"
+            tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_red))
         }
 
         val wifiPath = metrics.paths.firstOrNull { it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_WIFI }
+        val wifiSsid = wifiPath?.carrierName?.ifEmpty { "Wi-Fi" } ?: "Wi-Fi"
+        val isWifiOnline = wifiPath != null && (wifiPath.status == com.streamezy.capture.bonding.PathStatus.ONLINE || wifiPath.status == com.streamezy.capture.bonding.PathStatus.ACTIVE || wifiPath.status == com.streamezy.capture.bonding.PathStatus.HEALTHY) && wifiPath.network != null
 
-        // Line 1: Wi-Fi live TX metrics
-        val isWifiLive = (wifiPath?.status == com.streamezy.capture.bonding.PathStatus.ONLINE || wifiPath?.status == com.streamezy.capture.bonding.PathStatus.CONNECTING) && wifiPath?.network != null
-        if (isWifiLive && wifiPath != null) {
-            val ssid = if (wifiPath.carrierName.isNotBlank() && wifiPath.carrierName != "Wi-Fi") wifiPath.carrierName else "Connected"
-            tvBondingNetworks.text = String.format("Wi-Fi: %s ● TX: %.1f Mbps (%dms)", ssid, wifiPath.currentUsageMbps, wifiPath.latencyMs)
+        // Line 1: Wi-Fi status with Company / SSID and Speed
+        if (isWifiOnline && wifiPath != null) {
+            val speed = if (wifiPath.currentUsageMbps > 0) wifiPath.currentUsageMbps else wifiPath.availableBandwidthMbps
+            tvBondingNetworks.text = String.format("📶 Wi-Fi [%s]: 🟢 ACTIVE %.1f Mbps (%dms)", wifiSsid, speed, wifiPath.latencyMs)
+        } else if (wifiPath?.status == com.streamezy.capture.bonding.PathStatus.TESTING || wifiPath?.status == com.streamezy.capture.bonding.PathStatus.CONNECTING) {
+            tvBondingNetworks.text = "📶 Wi-Fi [$wifiSsid]: 🟡 CONNECTING..."
+        } else if (wifiPath?.status == com.streamezy.capture.bonding.PathStatus.RECOVERING) {
+            tvBondingNetworks.text = String.format("📶 Wi-Fi [%s]: 🔵 RECOVERING %.1f Mbps", wifiSsid, wifiPath.currentUsageMbps)
         } else {
-            tvBondingNetworks.text = "Wi-Fi: Disconnected"
+            tvBondingNetworks.text = "📶 Wi-Fi: 🔴 CUT / OFFLINE (0.0 Mbps)"
         }
 
-        // Line 2: SIM live TX metrics
+        // Line 2: SIM / Mobile Networks with Carrier name (Jio, Airtel, Vi) and Speed
         val simPaths = metrics.paths.filter { 
-            (it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM1 || 
-             it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM2) && 
-            (it.status == com.streamezy.capture.bonding.PathStatus.ONLINE || it.status == com.streamezy.capture.bonding.PathStatus.CONNECTING) &&
-            it.network != null
+            it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM1 || 
+            it.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM2
         }
-        if (simPaths.isNotEmpty()) {
-            val simSummary = simPaths.joinToString(" + ") { p ->
-                val carrier = if (p.carrierName.isNotBlank() && p.carrierName != "Carrier unavailable") p.carrierName else "Cellular"
-                String.format("%s ● TX: %.1f Mbps (%dms)", carrier, p.currentUsageMbps, p.latencyMs)
+        val simEntries = simPaths.mapNotNull { p ->
+            val slotNum = if (p.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM2) 2 else 1
+            val carrier = p.carrierName.ifEmpty { "SIM $slotNum" }
+            if (carrier == "No SIM") return@mapNotNull null
+            val isOnline = (p.status == com.streamezy.capture.bonding.PathStatus.ONLINE || p.status == com.streamezy.capture.bonding.PathStatus.ACTIVE || p.status == com.streamezy.capture.bonding.PathStatus.HEALTHY) && p.network != null
+            if (isOnline) {
+                val speed = if (p.currentUsageMbps > 0) p.currentUsageMbps else p.availableBandwidthMbps
+                String.format("📱 SIM %d [%s]: 🟢 ACTIVE %.1f Mbps (%dms)", slotNum, carrier, speed, p.latencyMs)
+            } else if (p.status == com.streamezy.capture.bonding.PathStatus.TESTING || p.status == com.streamezy.capture.bonding.PathStatus.CONNECTING) {
+                "📱 SIM $slotNum [$carrier]: 🟡 CONNECTING"
+            } else if (p.status == com.streamezy.capture.bonding.PathStatus.RECOVERING) {
+                String.format("📱 SIM %d [%s]: 🔵 RECOVERING %.1f Mbps", slotNum, carrier, p.currentUsageMbps)
+            } else {
+                "📱 SIM $slotNum [$carrier]: 🔴 CUT / NO DATA"
             }
-            tvBondingSimNetworks.text = "SIM networks: $simSummary"
+        }
+        if (simEntries.isNotEmpty()) {
+            tvBondingSimNetworks.text = simEntries.joinToString(" | ")
         } else {
-            tvBondingSimNetworks.text = "SIM networks: Standby / No Data"
+            tvBondingSimNetworks.text = "📱 SIM: 🔴 CUT / NO DATA (0.0 Mbps)"
         }
 
+        // Line 3: Bonding State & Total combined speed with VPS Receiving Data status
         val sentMb = metrics.totalBytesSent / (1024.0 * 1024.0)
         val arqRepaired = metrics.retransmissionsRepaired
-        val fecSent = metrics.fecPacketsSent
-        tvBondingMetrics.text = String.format("Avail: %.1f Mbps | Usage: %.1f Mbps | Sent: %.1f MB | %dms | ARQ: %d | FEC: %d (Zero Loss)",
-            metrics.totalAvailableBandwidthMbps, metrics.totalUsageMbps, sentMb, metrics.averageLatencyMs, arqRepaired, fecSent)
+        val streamKey = streamConfig.streamKey.trim().ifEmpty { "live" }
+        val vpsRxTag = if (metrics.isVpsReceiving) "🔴 VPS RX: $streamKey (OK)" else "⚠️ VPS RX: $streamKey (WAITING)"
+        if (isBonded) {
+            tvBondingMetrics.text = String.format("⚡ BONDED (%d NETS) ● %.1f Mbps | %s | Sent: %.1f MB", 
+                count, totalActiveSpeed, vpsRxTag, sentMb)
+        } else if (count == 1) {
+            val singlePath = onlinePaths[0]
+            val singleName = singlePath.carrierName.ifEmpty { singlePath.name }
+            val singleSpeed = if (singlePath.currentUsageMbps > 0) singlePath.currentUsageMbps else singlePath.availableBandwidthMbps
+            tvBondingMetrics.text = String.format("🔗 SINGLE LINK ● %.1f Mbps (%s) | %s | Sent: %.1f MB",
+                singleSpeed, singleName, vpsRxTag, sentMb)
+        } else {
+            tvBondingMetrics.text = "⚠️ ALL NETWORKS CUT ● Buffer holding (10s)... Tap GO LIVE to reconnect"
+        }
+    }
+
+    private fun showAllNetworksWarning() {
+        if (!isStreaming) return
+        if (isAllNetworksCutActive) return
+        isAllNetworksCutActive = true
+        allNetworksCutCountdown = 10
+        runOnUiThread {
+            if (::cardAllNetworksCutWarning.isInitialized) {
+                cardAllNetworksCutWarning.visibility = View.VISIBLE
+            }
+            if (::tvWarningCountdown.isInitialized) {
+                tvWarningCountdown.text = "Buffer holding in memory (10s)... Connect Wi-Fi or turn on SIM."
+            }
+            allNetworksCutHandler.removeCallbacks(allNetworksCutRunnable)
+            allNetworksCutHandler.postDelayed(allNetworksCutRunnable, 1000)
+
+            // Vibrate warning to alert broadcaster immediately
+            try {
+                val v = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    v?.vibrate(android.os.VibrationEffect.createOneShot(500, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    v?.vibrate(500)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Vibrate error", e)
+            }
+        }
+    }
+
+    private fun dismissAllNetworksWarning() {
+        if (!isAllNetworksCutActive) return
+        isAllNetworksCutActive = false
+        runOnUiThread {
+            allNetworksCutHandler.removeCallbacks(allNetworksCutRunnable)
+            if (::cardAllNetworksCutWarning.isInitialized) {
+                cardAllNetworksCutWarning.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun triggerManualNetworkReconnect() {
+        runOnUiThread {
+            Toast.makeText(this, "Probing network interfaces & reconnecting...", Toast.LENGTH_SHORT).show()
+            Thread({
+                try {
+                    previewNetworkManager?.startDiscovery()
+                    bondSession?.networkManager?.startDiscovery()
+                    bondSession?.networkManager?.triggerSimFailover()
+                    bondSession?.syncPathClients()
+                    bondSession?.replayRecoveryBuffer()
+                } catch (e: Exception) {
+                    Log.w(TAG, "triggerManualNetworkReconnect error", e)
+                }
+            }, "ManualNetReconnectWorker").start()
+        }
     }
 
     private fun updateNetworkStatusPreview() {
@@ -1388,64 +1579,75 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             val sim1Path = netMgr.paths[com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM1]
             val sim2Path = netMgr.paths[com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM2]
 
-            val isWifiOnline = wifiPath?.status == com.streamezy.capture.bonding.PathStatus.ONLINE
-            val isSim1Online = sim1Path?.status == com.streamezy.capture.bonding.PathStatus.ONLINE
-            val isSim2Online = sim2Path?.status == com.streamezy.capture.bonding.PathStatus.ONLINE
+            val isWifiOnline = (wifiPath?.status == com.streamezy.capture.bonding.PathStatus.ACTIVE || wifiPath?.status == com.streamezy.capture.bonding.PathStatus.ONLINE || wifiPath?.status == com.streamezy.capture.bonding.PathStatus.HEALTHY) && wifiPath?.network != null
+            val isSim1Online = (sim1Path?.status == com.streamezy.capture.bonding.PathStatus.ACTIVE || sim1Path?.status == com.streamezy.capture.bonding.PathStatus.ONLINE || sim1Path?.status == com.streamezy.capture.bonding.PathStatus.HEALTHY) && sim1Path?.network != null
+            val isSim2Online = (sim2Path?.status == com.streamezy.capture.bonding.PathStatus.ACTIVE || sim2Path?.status == com.streamezy.capture.bonding.PathStatus.ONLINE || sim2Path?.status == com.streamezy.capture.bonding.PathStatus.HEALTHY) && sim2Path?.network != null
 
             val onlineCount = (if (isWifiOnline) 1 else 0) + (if (isSim1Online) 1 else 0) + (if (isSim2Online) 1 else 0)
 
             if (onlineCount >= 2) {
-                tvBondingBadge.text = "BONDED ($onlineCount)"
+                tvBondingBadge.text = "⚡ BONDED ($onlineCount)"
                 tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
             } else if (onlineCount == 1) {
-                tvBondingBadge.text = "1 NET"
+                tvBondingBadge.text = "🔗 1 NET"
                 tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_blue))
             } else {
-                tvBondingBadge.text = "OFFLINE"
+                tvBondingBadge.text = "⚠️ OFFLINE"
                 tvBondingBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.text_secondary))
             }
 
-            // Line 1: Wi-Fi details
+            // Line 1: Wi-Fi with SSID
+            val wifiSsid = wifiPath?.carrierName?.ifEmpty { "Wi-Fi" } ?: "Wi-Fi"
             if (isWifiOnline && wifiPath != null) {
-                val ssid = if (wifiPath.carrierName.isNotBlank() && wifiPath.carrierName != "Wi-Fi") wifiPath.carrierName else "Connected"
-                tvBondingNetworks.text = String.format("Wi-Fi: %s ● Online (%.1f Mbps)", ssid, wifiPath.availableBandwidthMbps)
+                tvBondingNetworks.text = String.format("📶 Wi-Fi [%s]: 🟢 READY %.1f Mbps", wifiSsid, wifiPath.availableBandwidthMbps)
+            } else if (wifiPath?.status == com.streamezy.capture.bonding.PathStatus.TESTING) {
+                tvBondingNetworks.text = "📶 Wi-Fi [$wifiSsid]: 🟡 DETECTING..."
             } else {
-                tvBondingNetworks.text = "Wi-Fi: Disconnected"
+                tvBondingNetworks.text = "📶 Wi-Fi: 🔴 DISCONNECTED (0.0 Mbps)"
             }
 
-            // Line 2: SIM network details
-            val onlineSims = listOfNotNull(
-                if (isSim1Online) sim1Path else null,
-                if (isSim2Online) sim2Path else null
-            )
-            if (onlineSims.isNotEmpty()) {
-                val netType = netMgr.getNetworkTypeName()
-                val simSummary = onlineSims.joinToString(" + ") { sim ->
-                    val carrier = if (sim.carrierName.isNotBlank() && sim.carrierName != "Carrier unavailable") sim.carrierName else "Cellular"
-                    String.format("%s (%s) ● Online (%.1f Mbps)", carrier, netType, sim.availableBandwidthMbps)
-                }
-                tvBondingSimNetworks.text = "SIM networks: $simSummary"
-            } else {
-                val simCarrier = netMgr.getSimCarrierName(0)
-                if (simCarrier != "Carrier unavailable") {
-                    val netType = netMgr.getNetworkTypeName()
-                    tvBondingSimNetworks.text = "SIM networks: $simCarrier ($netType) ● Standby / No Data"
+            // Line 2: SIM with carrier name (Jio, Airtel, Vi)
+            val simEntries = mutableListOf<String>()
+            if (sim1Path != null && sim1Path.carrierName != "No SIM") {
+                val c1 = sim1Path.carrierName.ifEmpty { "SIM 1" }
+                if (isSim1Online) {
+                    simEntries.add(String.format("📱 SIM 1 [%s]: 🟢 READY %.1f Mbps", c1, sim1Path.availableBandwidthMbps))
                 } else {
-                    tvBondingSimNetworks.text = "SIM networks: Standby / No Data"
+                    simEntries.add("📱 SIM 1 [$c1]: 🔴 STANDBY")
                 }
+            }
+            if (sim2Path != null && sim2Path.carrierName != "No SIM") {
+                val c2 = sim2Path.carrierName.ifEmpty { "SIM 2" }
+                if (isSim2Online) {
+                    simEntries.add(String.format("📱 SIM 2 [%s]: 🟢 READY %.1f Mbps", c2, sim2Path.availableBandwidthMbps))
+                } else {
+                    simEntries.add("📱 SIM 2 [$c2]: 🔴 STANDBY")
+                }
+            }
+            if (simEntries.isNotEmpty()) {
+                tvBondingSimNetworks.text = simEntries.joinToString(" | ")
+            } else {
+                tvBondingSimNetworks.text = "📱 SIM: 🔴 STANDBY (0.0 Mbps)"
             }
 
             val totalAvail = (if (isWifiOnline) wifiPath?.availableBandwidthMbps ?: 0.0 else 0.0) +
                              (if (isSim1Online) sim1Path?.availableBandwidthMbps ?: 0.0 else 0.0) +
                              (if (isSim2Online) sim2Path?.availableBandwidthMbps ?: 0.0 else 0.0)
 
-            tvBondingMetrics.text = String.format("Avail: %.1f Mbps | Usage: 0.0 Mbps (Standby)", totalAvail)
+            if (onlineCount >= 2) {
+                tvBondingMetrics.text = String.format("⚡ READY TO BOND (%d NETS) ● Available: %.1f Mbps", onlineCount, totalAvail)
+            } else if (onlineCount == 1) {
+                tvBondingMetrics.text = String.format("🔗 SINGLE LINK READY ● Available: %.1f Mbps", totalAvail)
+            } else {
+                tvBondingMetrics.text = "⚠️ NO NETWORKS DETECTED ● Connect Wi-Fi or turn on SIM"
+            }
         } catch (e: Exception) {
             Log.w(TAG, "updateNetworkStatusPreview failed", e)
         }
     }
 
     private fun stopLiveStream() {
+        dismissAllNetworksWarning()
         try {
             genericStream?.stopStream()
         } catch (e: Exception) {
@@ -1821,6 +2023,48 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
         dialog.show()
     }
 
+    private var noNetworkWarningDialog: AlertDialog? = null
+
+    private fun showNoNetworkWarningDialog(paths: List<com.streamezy.capture.bonding.NetworkPath>) {
+        if (isFinishing || isDestroyed) return
+        runOnUiThread {
+            if (noNetworkWarningDialog?.isShowing == true) return@runOnUiThread
+
+            val messageBuilder = StringBuilder()
+            messageBuilder.append("⚠️ Wi-Fi is disconnected and Mobile Data is not available.\n\n")
+            messageBuilder.append("AVAILABLE NETWORK LIST:\n")
+            messageBuilder.append("─────────────────────────\n")
+
+            for (p in paths) {
+                val icon = when {
+                    p.status == com.streamezy.capture.bonding.PathStatus.ONLINE -> "🟢"
+                    p.status == com.streamezy.capture.bonding.PathStatus.FAILING -> "🟠"
+                    else -> "⚪"
+                }
+                val detail = if (p.statusDetail.isNotBlank() && p.statusDetail != "Not checked") p.statusDetail else p.status.name
+                messageBuilder.append("$icon ${p.name}\n   Status: $detail\n\n")
+            }
+
+            messageBuilder.append("Please turn on Mobile Data or reconnect to Wi-Fi.")
+
+            noNetworkWarningDialog = AlertDialog.Builder(this)
+                .setTitle("⚠️ Network Warning")
+                .setMessage(messageBuilder.toString())
+                .setPositiveButton("Network Center") { _, _ ->
+                    showNetworkCenterDialog()
+                }
+                .setNegativeButton("Dismiss", null)
+                .show()
+        }
+    }
+
+    private fun dismissNoNetworkWarningDialog() {
+        if (noNetworkWarningDialog?.isShowing == true) {
+            noNetworkWarningDialog?.dismiss()
+            noNetworkWarningDialog = null
+        }
+    }
+
     private fun showNetworkCenterDialog() {
         val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_network_center, null)
         val dialog = AlertDialog.Builder(this)
@@ -1899,19 +2143,22 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 val tvSent = cardView.findViewById<TextView>(R.id.tvCardSent)
                 val tvLatencyLoss = cardView.findViewById<TextView>(R.id.tvCardLatencyLoss)
 
-                tvName.text = "${p.name} [${p.transportType}]"
+                val carrierLabel = if (p.carrierName.isNotBlank() && !p.name.contains(p.carrierName, ignoreCase = true)) " [${p.carrierName}]" else ""
+                tvName.text = "${p.name}$carrierLabel [${p.transportType}]"
                 if (p.pathId == com.streamezy.capture.bonding.AndroidNetworkManager.PATH_ID_SIM2 && p.status != com.streamezy.capture.bonding.PathStatus.ONLINE) {
                     tvStatus.text = "STANDBY (VOICE ONLY)"
                     tvStatus.setBackgroundColor(ContextCompat.getColor(this, R.color.text_secondary))
                 } else {
-                    val isLiveOnline = (p.status == com.streamezy.capture.bonding.PathStatus.ONLINE || p.status == com.streamezy.capture.bonding.PathStatus.CONNECTING) && p.network != null
+                    val isLiveOnline = (p.status == com.streamezy.capture.bonding.PathStatus.ONLINE || p.status == com.streamezy.capture.bonding.PathStatus.ACTIVE || p.status == com.streamezy.capture.bonding.PathStatus.HEALTHY || p.status == com.streamezy.capture.bonding.PathStatus.CONNECTING) && p.network != null
                     if (isLiveOnline) {
                         tvStatus.text = "ONLINE"
                         tvStatus.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_green))
                     } else {
                         tvStatus.text = p.status.name
                         val statusColor = when (p.status) {
-                            com.streamezy.capture.bonding.PathStatus.ONLINE -> R.color.accent_green
+                            com.streamezy.capture.bonding.PathStatus.ONLINE,
+                            com.streamezy.capture.bonding.PathStatus.ACTIVE,
+                            com.streamezy.capture.bonding.PathStatus.HEALTHY -> R.color.accent_green
                             com.streamezy.capture.bonding.PathStatus.CONNECTING,
                             com.streamezy.capture.bonding.PathStatus.RECOVERING -> R.color.accent_blue
                             com.streamezy.capture.bonding.PathStatus.FAILING -> R.color.accent_orange
@@ -1922,7 +2169,8 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 }
 
                 tvAvail.text = String.format("Avail: %.1f Mbps", p.availableBandwidthMbps)
-                tvUsage.text = String.format("TX Usage: %.1f Mbps", p.currentUsageMbps)
+                val speed = if (p.currentUsageMbps > 0) p.currentUsageMbps else p.availableBandwidthMbps
+                tvUsage.text = String.format("Speed: %.1f Mbps (TX: %.1f)", speed, p.currentUsageMbps)
                 val sentMb = p.bytesSent / (1024.0 * 1024.0)
                 tvSent.text = String.format("Sent: %.1f MB (TX: %d | ACK: %d)", sentMb, p.packetsSent, p.packetsAcked)
                 tvLatencyLoss.text = String.format("%dms RTT (%dms jit) | %.1f%% loss", p.latencyMs, p.jitterMs, p.lossRate)
@@ -2032,7 +2280,8 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             btnLive.text = getString(R.string.stop_stream)
             btnLive.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_red))
 
-            tvLiveBadge.text = getString(R.string.live_badge)
+            vpsRxBlinkState = true
+            tvLiveBadge.text = "🔴 LIVE"
             tvLiveBadge.setBackgroundColor(ContextCompat.getColor(this, R.color.accent_red))
 
             // Notify VPS monitoring of active stream session
@@ -2046,6 +2295,9 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                     connectionType = if (streamConfig.isBondingEnabled) "bonded_android" else "direct_rtmp"
                 )
             }
+
+            // Replay any buffered footage from app backend so no interrupted seconds are missed
+            bondSession?.replayRecoveryBuffer()
 
             Toast.makeText(this, "Live Broadcast Connected!", Toast.LENGTH_SHORT).show()
             updateAudioStatusPanelUI()
@@ -2082,6 +2334,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
                 Log.e(TAG, "stopStream on connection failed error", e)
             }
             runOnUiThread {
+                dismissAllNetworksWarning()
                 isStreaming = false
                 uptimeHandler.removeCallbacks(uptimeRunnable)
                 tvUptime.text = "00:00:00"
@@ -2135,6 +2388,7 @@ class MainActivity : AppCompatActivity(), ConnectChecker {
             Log.e(TAG, "stopStream onDisconnect error", e)
         }
         runOnUiThread {
+            dismissAllNetworksWarning()
             isStreaming = false
             uptimeHandler.removeCallbacks(uptimeRunnable)
             tvUptime.text = "00:00:00"

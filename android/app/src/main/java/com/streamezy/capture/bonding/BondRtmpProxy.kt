@@ -56,9 +56,15 @@ class BondRtmpProxy(
             // Wire downlink data from VPS back to RootEncoder
             bondSession.onDownlinkData = { data ->
                 try {
-                    synchronized(this) {
-                        clientOut?.write(data)
-                        clientOut?.flush()
+                    val str = String(data)
+                    if (str.contains("__RTMP_DISCONNECT__")) {
+                        Log.w(TAG, "VPS MediaMTX disconnected or unhandshaked! Closing loopback socket to intimate broadcaster...")
+                        closeClient()
+                    } else {
+                        synchronized(this) {
+                            clientOut?.write(data)
+                            clientOut?.flush()
+                        }
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Downlink write to RootEncoder failed: ${e.message}")

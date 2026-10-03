@@ -4,12 +4,20 @@ import android.net.Network
 import kotlin.math.abs
 
 enum class PathStatus {
+    STANDBY,
+    AVAILABLE,
+    TESTING,
+    HEALTHY,
+    ACTIVE,
+    DEGRADED,
+    FAILED,
+    RECOVERING,
+    // Aliases for compatibility
     DISCONNECTED,
     CONNECTING,
     ONLINE,
     FAILING,
-    OFFLINE,
-    RECOVERING
+    OFFLINE
 }
 
 data class NetworkPath(
@@ -17,7 +25,7 @@ data class NetworkPath(
     var name: String,
     val transportType: String,
     var network: Network? = null,
-    var status: PathStatus = PathStatus.DISCONNECTED,
+    var status: PathStatus = PathStatus.STANDBY,
     var latencyMs: Long = 0L,
     var jitterMs: Long = 0L,
     var lossRate: Float = 0f,
@@ -41,7 +49,15 @@ data class NetworkPath(
         get() = (lossRate * 100.0).toDouble()
 
     val isUsable: Boolean
-        get() = (status == PathStatus.ONLINE || status == PathStatus.RECOVERING) && network != null
+        get() = (status == PathStatus.ACTIVE || 
+                 status == PathStatus.ONLINE || 
+                 status == PathStatus.HEALTHY || 
+                 status == PathStatus.RECOVERING || 
+                 status == PathStatus.AVAILABLE || 
+                 status == PathStatus.TESTING || 
+                 status == PathStatus.CONNECTING || 
+                 status == PathStatus.DEGRADED || 
+                 status == PathStatus.FAILING) && network != null
 
     fun updateMetrics(newLatency: Long, loss: Float, mbps: Double) {
         if (latencyMs > 0L) {

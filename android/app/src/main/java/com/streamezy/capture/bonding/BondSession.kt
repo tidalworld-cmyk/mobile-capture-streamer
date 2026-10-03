@@ -30,7 +30,8 @@ data class BondMetrics(
     val playoutDelayMs: Double,
     val isZeroLoss: Boolean,
     val paths: List<NetworkPath>,
-    val configuredMaxMbps: Double = 1.5
+    val configuredMaxMbps: Double = 1.5,
+    val isVpsReceiving: Boolean = false
 )
 
 class BondSession(
@@ -57,6 +58,7 @@ class BondSession(
     private val sequenceNumber = AtomicLong(0L)
     val sessionId: Int = Random.nextInt(100000, 999999)
     private val isRunning = AtomicBoolean(false)
+    private val isReconnecting = AtomicBoolean(false)
 
     // LiveU LRT ARQ Ring Buffer
     private val ringBuffer = ConcurrentHashMap<Long, BondPacket>()
@@ -69,26 +71,71 @@ class BondSession(
     private val fecBuffer = java.util.ArrayList<Pair<Long, ByteArray>>()
     private val fecLock = Any()
 
+    // Sections 10 & 30: Small Bounded Adaptive Transport Buffer
+    data class QueuedPacket(val payload: ByteArray, val timestamp: Long)
+    private val adaptiveQueue = java.util.concurrent.ConcurrentLinkedQueue<QueuedPacket>()
+    private val maxAdaptiveQueueSize = 120 // ~160 KB @ 1380 bytes (~800ms buffer at 1.5 Mbps)
+    private val maxPacketAgeMs = 2000L
+    private var metricsLogCounter = 0
+
+    // Continuous Rolling Backend Recovery Buffer (stores last 6-8 seconds of video chunks)
+    private val recoveryBuffer = java.util.concurrent.ConcurrentLinkedDeque<ByteArray>()
+    private val maxRecoveryBufferSize = 600 // ~800 KB @ 1380 bytes (~5-6 seconds of continuous video stream)
+    private val criticalHeaderBuffer = java.util.concurrent.CopyOnWriteArrayList<ByteArray>()
+
+    val lastVpsAckTimestamp = java.util.concurrent.atomic.AtomicLong(0L)
+    val isVpsReceiving: Boolean
+        get() = isRunning.get() && ((System.currentTimeMillis() - lastVpsAckTimestamp.get()) < 2500L) && (pathClients.values.sumOf { it.path.packetsAcked } > 0)
+
+    var onBroadcastStopped: ((String) -> Unit)? = null
+
+    fun notifyBroadcastStopped(reason: String) {
+        Log.w(TAG, "[BROADCAST_STOPPED] $reason")
+        onBroadcastStopped?.invoke(reason)
+    }
+
+    fun replayRecoveryBuffer() {
+        val bufferedChunks = recoveryBuffer.toList()
+        if (bufferedChunks.isEmpty()) return
+        Log.i(TAG, "Replaying backend recovery buffer: ${bufferedChunks.size} chunks (~${bufferedChunks.size * 1380 / 1024} KB of footage)...")
+        Thread({
+            for (chunk in bufferedChunks) {
+                if (!isRunning.get()) break
+                dispatchPacket(chunk)
+                try { Thread.sleep(2) } catch (_: Exception) {}
+            }
+            Log.i(TAG, "Backend recovery buffer replay complete.")
+        }, "RecoveryBuffer-Replay").start()
+    }
+
     var mode: BondingMode = BondingMode.OFF
 
     val isBonded: Boolean
-        get() = pathClients.values.count { it.path.status == PathStatus.ONLINE } >= 2
+        get() = pathClients.values.count { 
+            it.path.isUsable && (it.path.status == PathStatus.ACTIVE || it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.RECOVERING || it.path.status == PathStatus.HEALTHY)
+        } >= 2
 
     val activePathCount: Int
-        get() = pathClients.values.count { it.path.status == PathStatus.ONLINE }
+        get() = pathClients.values.count { 
+            it.path.isUsable && (it.path.status == PathStatus.ACTIVE || it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.RECOVERING || it.path.status == PathStatus.HEALTHY)
+        }
 
     val combinedUploadMbps: Double
         get() = pathClients.values.sumOf { it.path.currentUsageMbps }
 
     val averageLatencyMs: Long
         get() {
-            val online = pathClients.values.filter { it.path.status == PathStatus.ONLINE }
+            val online = pathClients.values.filter { 
+                it.path.status == PathStatus.ACTIVE || it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.RECOVERING || it.path.status == PathStatus.HEALTHY
+            }
             return if (online.isNotEmpty()) online.map { it.path.latencyMs }.average().toLong() else 0L
         }
 
     val averageJitterMs: Long
         get() {
-            val online = pathClients.values.filter { it.path.status == PathStatus.ONLINE }
+            val online = pathClients.values.filter { 
+                it.path.status == PathStatus.ACTIVE || it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.RECOVERING || it.path.status == PathStatus.HEALTHY
+            }
             return if (online.isNotEmpty()) online.map { it.path.jitterMs }.average().toLong() else 0L
         }
 
@@ -122,7 +169,7 @@ class BondSession(
 
                     for (p in paths) {
                         currentTotalSent += p.bytesSent
-                        if (p.status == PathStatus.ONLINE) {
+                        if (p.status == PathStatus.ACTIVE || p.status == PathStatus.ONLINE || p.status == PathStatus.RECOVERING || p.status == PathStatus.HEALTHY) {
                             val bytesDelta = (p.bytesSent - p.lastBytesSent).coerceAtLeast(0L)
                             p.currentUsageMbps = (bytesDelta * 8.0) / 1_000_000.0
                             p.lastBytesSent = p.bytesSent
@@ -130,6 +177,34 @@ class BondSession(
                             currentTotalAvailable += p.availableBandwidthMbps
                         } else {
                             p.currentUsageMbps = 0.0
+                        }
+                    }
+
+                    // Section 34: Development/debugging logs matching exact Master Prompt specification
+                    metricsLogCounter++
+                    if (metricsLogCounter >= 3) {
+                        metricsLogCounter = 0
+                        val ts = AndroidNetworkManager.nowTimestamp()
+                        val wifi = paths.firstOrNull { it.pathId == AndroidNetworkManager.PATH_ID_WIFI }
+                        val sim = paths.firstOrNull { it.pathId == AndroidNetworkManager.PATH_ID_SIM1 || it.pathId == AndroidNetworkManager.PATH_ID_SIM2 }
+                        if (wifi != null && (wifi.status == PathStatus.ACTIVE || wifi.status == PathStatus.ONLINE)) {
+                            Log.i(TAG, "[$ts] Wi-Fi ACTIVE ${String.format(java.util.Locale.US, "%.1f", wifi.currentUsageMbps)} Mbps")
+                        } else if (wifi != null && (wifi.status == PathStatus.TESTING || wifi.status == PathStatus.CONNECTING)) {
+                            Log.i(TAG, "[$ts] Wi-Fi TESTING")
+                        } else if (wifi != null && (wifi.status == PathStatus.FAILED || wifi.status == PathStatus.OFFLINE)) {
+                            Log.i(TAG, "[$ts] Wi-Fi FAILED")
+                        }
+
+                        if (sim != null && (sim.status == PathStatus.ACTIVE || sim.status == PathStatus.ONLINE)) {
+                            Log.i(TAG, "[$ts] SIM ACTIVE ${String.format(java.util.Locale.US, "%.1f", sim.currentUsageMbps)} Mbps")
+                        } else if (sim != null && (sim.status == PathStatus.TESTING || sim.status == PathStatus.CONNECTING)) {
+                            Log.i(TAG, "[$ts] SIM TESTING")
+                        } else if (sim != null && (sim.status == PathStatus.FAILED || sim.status == PathStatus.OFFLINE)) {
+                            Log.i(TAG, "[$ts] SIM FAILED")
+                        }
+
+                        if (currentTotalUsage > 0.05 || isBonded) {
+                            Log.i(TAG, "[$ts] Bond ACTIVE ${String.format(java.util.Locale.US, "%.1f", currentTotalUsage)} Mbps")
                         }
                     }
 
@@ -171,7 +246,8 @@ class BondSession(
                         playoutDelayMs = playoutDelayMs,
                         isZeroLoss = loss <= 0.1 || repaired > 0,
                         paths = paths,
-                        configuredMaxMbps = 1.5
+                        configuredMaxMbps = 1.5,
+                        isVpsReceiving = isVpsReceiving
                     )
                     onMetricsUpdated?.invoke(metrics)
                 } catch (e: Exception) {
@@ -182,6 +258,25 @@ class BondSession(
     }
 
     private fun syncPathClients(paths: List<NetworkPath>) {
+        val usablePaths = paths.filter { it.isUsable }
+        if (usablePaths.isEmpty()) {
+            if (!isReconnecting.getAndSet(true)) {
+                Log.w(TAG, "[ALL_NETWORKS_CUT] Both Wi-Fi and Cellular disconnected. Broadcast holding in rolling recovery buffer, attempting reconnect...")
+            }
+        } else if (isReconnecting.getAndSet(false)) {
+            val netNames = usablePaths.map { it.name }.joinToString(", ")
+            Log.i(TAG, "[NETWORK_RESTORED] Network re-established ($netNames). Resuming live broadcast and flushing recovery buffer...")
+            replayRecoveryBuffer()
+        }
+
+        val hadWifi = pathClients.containsKey(AndroidNetworkManager.PATH_ID_WIFI)
+        val wifiPath = paths.firstOrNull { it.pathId == AndroidNetworkManager.PATH_ID_WIFI }
+        val wifiNowUsable = wifiPath?.isUsable == true
+
+        val hadSim = pathClients.keys.any { it == AndroidNetworkManager.PATH_ID_SIM1 || it == AndroidNetworkManager.PATH_ID_SIM2 }
+        val simPath = paths.firstOrNull { (it.pathId == AndroidNetworkManager.PATH_ID_SIM1 || it.pathId == AndroidNetworkManager.PATH_ID_SIM2) && it.isUsable }
+        val simNowUsable = simPath != null
+
         for (path in paths) {
             if (path.isUsable && !pathClients.containsKey(path.pathId)) {
                 Log.i(TAG, "Initializing path client for ${path.name}")
@@ -194,6 +289,9 @@ class BondSession(
                 }
                 client.onNackReceived = { missingSeqs ->
                     handleNack(missingSeqs)
+                }
+                client.onPacketAcked = { pkt ->
+                    lastVpsAckTimestamp.set(System.currentTimeMillis())
                 }
                 pathClients[path.pathId] = client
                 client.start()
@@ -208,6 +306,66 @@ class BondSession(
                 Log.w(TAG, "Stopping path client for ${path.name}")
                 pathClients.remove(path.pathId)?.stop()
                 scheduler.onPathFailed(path.pathId)
+            }
+        }
+
+        // 1. If Wi-Fi just disconnected, ensure SIM transport is immediately boosted
+        if (hadWifi && !wifiNowUsable) {
+            val activeSim = pathClients.values.firstOrNull {
+                it.path.pathId == AndroidNetworkManager.PATH_ID_SIM1 || it.path.pathId == AndroidNetworkManager.PATH_ID_SIM2
+            }
+            if (activeSim != null) {
+                scheduler.onPathRecovered(activeSim.path.pathId)
+                Log.i(TAG, "[FAILOVER] Wi-Fi cut. Switching transport to ${activeSim.path.name}")
+
+                val recentSeqs = ringOrder.toList().takeLast(100)
+                for (seq in recentSeqs) {
+                    val pkt = ringBuffer[seq]
+                    if (pkt != null && pkt.pathId == AndroidNetworkManager.PATH_ID_WIFI) {
+                        val failoverPkt = BondPacket(
+                            packetType = PacketType.DATA,
+                            pathId = activeSim.path.pathId,
+                            sessionId = sessionId,
+                            streamId = pkt.streamId,
+                            sequence = pkt.sequence,
+                            timestamp = pkt.timestamp,
+                            flags = (pkt.flags.toInt() or PacketFlags.RETRANSMITTED.toInt()).toByte(),
+                            payload = pkt.payload
+                        )
+                        activeSim.sendPacket(failoverPkt)
+                    }
+                }
+
+                Log.i(TAG, "[STREAM] LIVE CONTINUES OVER SIM")
+            }
+        }
+
+        // 2. If Cellular SIM just disconnected, ensure Wi-Fi transport is boosted
+        if (hadSim && !simNowUsable && wifiNowUsable) {
+            val activeWifi = pathClients[AndroidNetworkManager.PATH_ID_WIFI]
+            if (activeWifi != null) {
+                scheduler.onPathRecovered(activeWifi.path.pathId)
+                Log.i(TAG, "[FAILOVER] Cellular SIM cut. Switching transport to ${activeWifi.path.name}")
+
+                val recentSeqs = ringOrder.toList().takeLast(100)
+                for (seq in recentSeqs) {
+                    val pkt = ringBuffer[seq]
+                    if (pkt != null && (pkt.pathId == AndroidNetworkManager.PATH_ID_SIM1 || pkt.pathId == AndroidNetworkManager.PATH_ID_SIM2)) {
+                        val failoverPkt = BondPacket(
+                            packetType = PacketType.DATA,
+                            pathId = activeWifi.path.pathId,
+                            sessionId = sessionId,
+                            streamId = pkt.streamId,
+                            sequence = pkt.sequence,
+                            timestamp = pkt.timestamp,
+                            flags = (pkt.flags.toInt() or PacketFlags.RETRANSMITTED.toInt()).toByte(),
+                            payload = pkt.payload
+                        )
+                        activeWifi.sendPacket(failoverPkt)
+                    }
+                }
+
+                Log.i(TAG, "[STREAM] LIVE CONTINUES OVER WI-FI")
             }
         }
     }
@@ -263,9 +421,47 @@ class BondSession(
         }
     }
 
+    private fun drainAdaptiveQueue() {
+        val now = System.currentTimeMillis()
+        while (!adaptiveQueue.isEmpty()) {
+            val q = adaptiveQueue.peek() ?: break
+            if (now - q.timestamp > maxPacketAgeMs) {
+                adaptiveQueue.poll() // Drop expired packet
+                continue
+            }
+            if (dispatchPacket(q.payload)) {
+                adaptiveQueue.poll()
+            } else {
+                break
+            }
+        }
+    }
+
     fun sendData(payload: ByteArray): Boolean {
         if (!isRunning.get() || mode == BondingMode.OFF) return false
 
+        // Keep continuous rolling recovery buffer of recent seconds in app backend
+        while (recoveryBuffer.size >= maxRecoveryBufferSize) {
+            recoveryBuffer.poll()
+        }
+        recoveryBuffer.add(payload.clone())
+
+        drainAdaptiveQueue()
+
+        val sent = dispatchPacket(payload)
+        if (!sent) {
+            // Section 10 & 30: Buffer packet in small adaptive transport buffer
+            val now = System.currentTimeMillis()
+            while (adaptiveQueue.size >= maxAdaptiveQueueSize) {
+                adaptiveQueue.poll() // Enforce bounded queue backpressure
+            }
+            adaptiveQueue.add(QueuedPacket(payload, now))
+            return true
+        }
+        return true
+    }
+
+    private fun dispatchPacket(payload: ByteArray): Boolean {
         val activePaths = pathClients.values.map { it.path }
         val selectedPath = scheduler.selectPath(activePaths) ?: pathClients.values.firstOrNull()?.path ?: return false
         val client = pathClients[selectedPath.pathId] ?: pathClients.values.firstOrNull() ?: return false
@@ -284,7 +480,7 @@ class BondSession(
             // Zero-drop failover: if primary path packet fails or drops to zero,
             // immediately redirect to surviving alternative path so broadcast never stops
             val survivingClient = pathClients.values.firstOrNull { 
-                it.path.pathId != client.path.pathId && (it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.RECOVERING || it.path.status == PathStatus.CONNECTING) && it.path.network != null
+                it.path.pathId != client.path.pathId && (it.path.status == PathStatus.ACTIVE || it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.RECOVERING || it.path.status == PathStatus.TESTING || it.path.status == PathStatus.CONNECTING) && it.path.network != null
             }
             if (survivingClient != null) {
                 val failoverPkt = BondPacket(
@@ -341,7 +537,7 @@ class BondSession(
                     val baseSeq = fecBuffer[0].first
                     val payloads = fecBuffer.map { it.second }
                     val fecPayload = BondPacket.encodeFecPayload(baseSeq, fecBuffer.size, payloads)
-                    val onlineClients = pathClients.values.filter { it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.RECOVERING }
+                    val onlineClients = pathClients.values.filter { it.path.status == PathStatus.ACTIVE || it.path.status == PathStatus.ONLINE || it.path.status == PathStatus.RECOVERING }
                     if (onlineClients.isNotEmpty()) {
                         val alt = onlineClients.filter { it.path.pathId != client.path.pathId }
                         val fecClient = alt.firstOrNull() ?: onlineClients.first()
